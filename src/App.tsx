@@ -965,7 +965,7 @@ export default function App() {
             
             <div className="relative z-10 md:w-1/2 space-y-6">
               <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center p-1 mb-6 shadow-md">
-                <img src="/sk-logo.png" alt="SK Logo" className="w-full h-full object-contain" />
+                <img src="/sk_logo.jpg" alt="SK Logo" className="w-full h-full object-contain" />
               </div>
               <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold leading-tight tracking-tight text-white mb-2">
                 SK Program Monitoring<br />System
@@ -1005,16 +1005,7 @@ export default function App() {
             <div className="relative z-10 md:w-5/12 mt-12 md:mt-0 right-0">
               <div className="bg-white/10 p-2 rounded-xl backdrop-blur-sm border border-white/20 shadow-2xl">
                 <div className="relative rounded-lg overflow-hidden border border-white/10 aspect-[16/10] bg-teal-900 flex items-center justify-center group">
-                  <img src="https://images.unsplash.com/photo-1523240795612-9a054b0db644?q=80&w=2070&auto=format&fit=crop" alt="Students" className="w-full h-full object-cover opacity-70 group-hover:scale-105 transition-transform duration-700" />
-                  <div className="absolute inset-x-0 bottom-6 px-6 flex items-end">
-                     <div className="w-full flex tracking-widest">
-                       <span className="text-3xl sm:text-4xl font-extrabold text-white uppercase drop-shadow-md pb-1 border-b-[6px] border-white z-10">SK SAN FRANCISCO</span>
-                       <div className="w-16 h-[3.25rem] bg-amber-400 -ml-1 border-b-[6px] border-amber-400"></div>
-                     </div>
-                  </div>
-                  <div className="absolute bottom-2 right-8 z-20">
-                     <span className="text-[8px] text-white/90 font-medium tracking-[0.2em] drop-shadow">SAN FRANCISCO, NAGA CITY</span>
-                  </div>
+                  <img src="/sk_mem.jpg" alt="SK San Francisco" className="w-full h-full object-cover transition-transform duration-700" />
                 </div>
               </div>
             </div>
@@ -1079,7 +1070,7 @@ export default function App() {
           <footer className="bg-[#125840] text-teal-50 py-6 px-6 md:px-12 flex flex-col md:flex-row items-center justify-between shrink-0">
             <div className="flex items-center gap-3 mb-4 md:mb-0">
               <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center p-1">
-                <img src="/sk-logo.png" alt="SK Logo" className="w-full h-full object-contain" />
+                <img src="/sk_logo.jpg" alt="SK Logo" className="w-full h-full object-contain" />
               </div>
               <span className="text-xs">© 2025 SK Program Monitoring System. All rights reserved.</span>
             </div>
