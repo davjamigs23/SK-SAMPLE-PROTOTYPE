@@ -71,6 +71,7 @@ import {
 } from 'lucide-react';
 
 import { jsPDF } from 'jspdf';
+import { supabase } from './lib/supabase';
 
 export default function App() {
   // --- DATABASE & SESSION STATES ---
@@ -86,6 +87,7 @@ export default function App() {
   const [registerEmail, setRegisterEmail] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
   const [registerRole, setRegisterRole] = useState<UserRole>('regular');
+  const [registerSecretCode, setRegisterSecretCode] = useState('');
   const [registerFirstName, setRegisterFirstName] = useState('');
   const [registerLastName, setRegisterLastName] = useState('');
   const [registerAge, setRegisterAge] = useState('20');
@@ -160,40 +162,114 @@ export default function App() {
     }, 4000);
   };
 
-  // Sync state mutations to LocalStorage
-  const updateDBState = (updated: SKDatabase) => {
+  // Sync state mutations to LocalStorage and Supabase
+  const updateDBState = async (updated: SKDatabase) => {
     setDb(updated);
     saveStoredDB(updated);
+
+    // Notice: Instead of sinking the entire `updated` object into a monolithic table,
+    // future inserts/updates should ideally use `await supabase.from('table_name').insert(data)`
+    // individually within their respective handler functions.
+    // For now, this local mutation syncs the UI, and relying on `supabase.from` 
+    // for true REST backend persistence.
   };
 
-  // Impersonating roles (Instantly logs in matching seeded user, or mocks one)
-  const handleRoleImpersonation = (role: UserRole) => {
-    const userRoleMatch = db.users.find((u) => u.role === role && u.is_approved);
-    if (userRoleMatch) {
-      setCurrentUser(userRoleMatch);
-      showToast(`Impersonated: ${userRoleMatch.email} (${role.toUpperCase()})`, 'info');
-    } else {
-      // Build a fallback approved simulated session
-      const mockUser: User = {
-        id: `mock-${role}-user`,
-        email: `${role}-demo@sanfrancisco.gov`,
-        role: role,
-        is_approved: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-      
-      const newUsers = [...db.users];
-      if (!newUsers.some(u => u.id === mockUser.id)) {
-        newUsers.push(mockUser);
+  useEffect(() => {
+    if (!supabase) return;
+
+    // 1. Load initial state from Supabase
+    const fetchState = async () => {
+      try {
+        const [
+          { data: users },
+          { data: participants },
+          { data: programs },
+          { data: expenses },
+          { data: program_participants },
+          { data: registrations },
+          { data: feedbacks }
+        ] = await Promise.all([
+          supabase.from('users').select('*'),
+          supabase.from('participants').select('*'),
+          supabase.from('programs').select('*'),
+          supabase.from('expenses').select('*'),
+          supabase.from('program_participants').select('*'),
+          supabase.from('registrations').select('*'),
+          supabase.from('feedback').select('*')
+        ]);
+
+        const remoteDb: SKDatabase = {
+          users: users && users.length > 0 ? users as User[] : db.users,
+          participants: participants && participants.length > 0 ? participants as Participant[] : db.participants,
+          programs: programs && programs.length > 0 ? programs as Program[] : db.programs,
+          expenses: expenses && expenses.length > 0 ? expenses as Expense[] : db.expenses,
+          program_participants: program_participants && program_participants.length > 0 ? program_participants as ProgramParticipant[] : db.program_participants,
+          registrations: registrations && registrations.length > 0 ? registrations as Registration[] : db.registrations,
+          feedbacks: feedbacks && feedbacks.length > 0 ? feedbacks as Feedback[] : db.feedbacks,
+          notifications: db.notifications // Preserve local notifications
+        };
+
+        setDb(remoteDb);
+        saveStoredDB(remoteDb);
+        
+        // Ensure currentUser updates if their profile was changed
+        setCurrentUser(prevUser => {
+          const matched = remoteDb.users.find(u => u.id === prevUser.id);
+          return matched || prevUser;
+        });
+
+      } catch(err) {
+        console.error("Supabase initial fetch exception:", err);
       }
-      
-      const updated = { ...db, users: newUsers };
-      updateDBState(updated);
-      setCurrentUser(mockUser);
-      showToast(`Impersonated simulated guest: ${mockUser.email}`, 'info');
-    }
-  };
+    };
+
+    fetchState();
+
+    // 2. Auth Session Listener
+    const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session) {
+        let { data, error } = await supabase.from('users').select('*').eq('id', session.user.id).maybeSingle();
+        
+        if (!data && !error) {
+          // User is in auth but not in public.users - sync them
+          const { data: newData, error: insertError } = await supabase.from('users').upsert({
+            id: session.user.id,
+            email: session.user.email?.toLowerCase() || '',
+            role: session.user.email?.toLowerCase() === 'sksanfrancisconagacity@gmail.com' ? 'admin' : 'regular',
+            is_approved: session.user.email?.toLowerCase() === 'sksanfrancisconagacity@gmail.com'
+          }).select().single();
+          
+          if (!insertError) {
+            data = newData;
+          }
+        }
+
+        if (data) {
+          setCurrentUser(data as User);
+          if (currentRoute === 'landing') {
+             setCurrentRoute(data.role === 'regular' ? 'user-dashboard' : 'dashboard');
+          }
+        }
+      } else {
+        setCurrentUser(getStoredDB().users[0]);
+        if (['dashboard', 'user-dashboard', 'programs', 'participants', 'expenses', 'reports'].includes(currentRoute)) {
+           setCurrentRoute('landing');
+        }
+      }
+    });
+
+    // 3. Realtime Subscription
+    const channel = supabase.channel('schema-db-changes')
+      .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+        fetchState();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+      authSub.unsubscribe();
+    };
+  }, []);
 
   // --- NOTIFICATION UTILS ---
   const handleMarkNotificationAsRead = (id: string) => {
@@ -221,7 +297,7 @@ export default function App() {
   };
 
   // --- SECURE AUTHENTICATION OPERATIONS ---
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
 
@@ -230,30 +306,56 @@ export default function App() {
       return;
     }
 
-    const matched = db.users.find((u) => u.email === loginEmail.toLowerCase());
-    if (!matched) {
-      setLoginError('No credentials match that email format.');
+    if (!supabase) {
+      setLoginError('Database connection not initialized.');
       return;
     }
 
-    if (!matched.is_approved) {
-      setLoginError('This account is pending Admin approval. Please contact SK Chairman Ramon Valenzuela.');
-      return;
-    }
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password: loginPassword,
+      });
 
-    // Success login
-    setCurrentUser(matched);
-    showToast(`Access Granted. Welcome back, ${matched.email}!`, 'success');
-    if (matched.role === 'regular') {
-      setCurrentRoute('user-dashboard');
-    } else {
-      setCurrentRoute('dashboard');
+      if (error) {
+        setLoginError('Invalid credentials or account not verified.');
+        return;
+      }
+
+      // After successful Auth, fetch user record from public.users to check role/approval
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', data.user.id)
+        .single();
+      
+      if (userError || !userData) {
+         setLoginError('User profile not found. Please contact administrator.');
+         return;
+      }
+
+      if (!userData.is_approved) {
+        setLoginError('This account is pending Admin approval. Please contact SK Chairman Zaldy D. Bragais Jr.');
+        return;
+      }
+
+      // Success login
+      setCurrentUser(userData as User);
+      showToast(`Access Granted. Welcome back, ${userData.email}!`, 'success');
+      if (userData.role === 'regular') {
+        setCurrentRoute('user-dashboard');
+      } else {
+        setCurrentRoute('dashboard');
+      }
+      setLoginEmail('');
+      setLoginPassword('');
+    } catch(err) {
+       console.error('Login exception:', err);
+       setLoginError('An unexpected error occurred.');
     }
-    setLoginEmail('');
-    setLoginPassword('');
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegisterError('');
     setRegisterSuccess(false);
@@ -263,87 +365,89 @@ export default function App() {
       return;
     }
 
-    if (db.users.some((u) => u.email === registerEmail.toLowerCase())) {
-      setRegisterError('This email is already associated with an account.');
+    if (registerRole === 'skofficial' && registerSecretCode !== 'SKSF2026') {
+      setRegisterError('Invalid secret code for SK Official registration.');
       return;
     }
 
-    const newUserId = `user-${Date.now()}`;
-    const newUser: User = {
-      id: newUserId,
-      email: registerEmail.toLowerCase(),
-      role: registerRole,
-      is_approved: registerRole === 'regular' ? false : true, // Regular requires approval, Officials auto-made for test comfort
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-
-    const newPart: Participant = {
-      id: db.participants.length + 1,
-      user_id: newUserId,
-      first_name: registerFirstName,
-      last_name: registerLastName,
-      age: parseInt(registerAge) || 20,
-      contact: registerContact,
-      email: registerEmail.toLowerCase(),
-      address: registerAddress,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-
-    const updatedUsers = [...db.users, newUser];
-    const updatedParticipants = [...db.participants, newPart];
-
-    // Trigger alert
-    const notifTitle = 'New Youth Registration';
-    const notifMsg = `${registerFirstName} ${registerLastName} requested a "${registerRole}" access handle. Pending review.`;
-
-    updateDBState({
-      ...db,
-      users: updatedUsers,
-      participants: updatedParticipants,
-      notifications: [
-        {
-          id: `notif-${Date.now()}`,
-          title: notifTitle,
-          message: notifMsg,
-          is_read: false,
-          created_at: new Date().toISOString()
-        },
-        ...db.notifications
-      ]
-    });
-
-    setRegisterSuccess(true);
-    showToast('Registration submitted for administrator approval.', 'success');
-
-    // If it's an official registration, trigger bypass so they don't block
-    if (registerRole !== 'regular') {
-      newUser.is_approved = true;
-      updateDBState({ ...db, users: [...db.users, newUser], participants: updatedParticipants });
+    if (!supabase) {
+      setRegisterError('Database connection not initialized.');
+      return;
     }
 
-    // Reset inputs
-    setRegisterEmail('');
-    setRegisterPassword('');
-    setRegisterFirstName('');
-    setRegisterLastName('');
-    setRegisterContact('');
+    try {
+      // 1. Sign up with Supabase Auth
+      const { data, error } = await supabase.auth.signUp({
+        email: registerEmail,
+        password: registerPassword,
+      });
+
+      if (error) {
+        setRegisterError(error.message);
+        return;
+      }
+
+      const userId = data.user?.id;
+      if (!userId) {
+        setRegisterError('Registration failed: no user ID received.');
+        return;
+      }
+
+      // 2. Upsert record into public.users
+      const { error: userError } = await supabase.from('users').upsert({
+        id: userId,
+        email: registerEmail.toLowerCase(),
+        role: registerRole,
+        is_approved: registerEmail.toLowerCase() === 'sksanfrancisconagacity@gmail.com' || false
+      });
+
+      if (userError) {
+        setRegisterError('Failed to sync user profile: ' + userError.message);
+        return;
+      }
+
+      // 3. Upsert record into public.participants
+      const { error: partError } = await supabase.from('participants').upsert({
+        user_id: userId,
+        first_name: registerFirstName,
+        last_name: registerLastName,
+        age: parseInt(registerAge) || 20,
+        contact: registerContact,
+        email: registerEmail.toLowerCase(),
+        address: registerAddress
+      }, { onConflict: 'user_id' });
+
+      if (partError) {
+        setRegisterError('Failed to create participant profile: ' + partError.message);
+        return;
+      }
+
+      setRegisterSuccess(true);
+      showToast('Registration submitted for administrator approval.', 'success');
+      
+      // Reset inputs
+      setRegisterEmail('');
+      setRegisterPassword('');
+      setRegisterFirstName('');
+      setRegisterLastName('');
+      setRegisterContact('');
+    } catch(err) {
+      console.error('Registration exception:', err);
+      setRegisterError('An unexpected error occurred during registration.');
+    }
   };
 
   // --- PROGRAM MANAGEMENT OPERATIONS ---
-  const handleCreateProgramSubmit = (e: React.FormEvent) => {
+  const handleCreateProgramSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!progFormName || !progFormDate || !progFormLoc) {
       showToast('Program parameters missing!', 'error');
       return;
     }
 
-    const nextId = db.programs.length > 0 ? Math.max(...db.programs.map((p) => p.id)) + 1 : 1;
     const filesArray = progFormFiles ? progFormFiles.split(',').map(s => s.trim()) : [];
 
-    const newProg: Program = {
-      id: nextId,
+    const newProg: Omit<Program, 'id' | 'created_at' | 'updated_at'> = {
       name: progFormName,
       description: progFormDesc,
       date: progFormDate,
@@ -352,15 +456,22 @@ export default function App() {
       budget: parseFloat(progFormBudget) || 0,
       status: progFormStatus,
       file_urls: filesArray,
-      created_by: currentUser.id,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      created_by: currentUser.id
     };
 
-    updateDBState({
-      ...db,
-      programs: [...db.programs, newProg]
-    });
+    if (supabase) {
+      const { data, error } = await supabase.from('programs').insert(newProg).select().single();
+      if (error) {
+        console.error('Supabase error creating program:', error);
+        showToast('Failed to sync program to database.', 'error');
+        return;
+      }
+      // Local state will be updated via realtime subscription, but we update locally for immediate feedback
+      updateDBState({
+        ...db,
+        programs: [...db.programs, data as Program]
+      });
+    }
 
     pushNotification('Program Registry Modified', `New program "${progFormName}" has been officially scheduled for ${progFormDate}.`);
     showToast(`Successfully published ${progFormName}!`, 'success');
@@ -377,26 +488,36 @@ export default function App() {
     setCurrentRoute('programs');
   };
 
-  const handleEditProgramSubmit = (e: React.FormEvent) => {
+  const handleEditProgramSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProgramId) return;
 
     const filesArray = progFormFiles ? progFormFiles.split(',').map(s => s.trim()) : [];
 
+    const updateData = {
+      name: progFormName,
+      description: progFormDesc,
+      date: progFormDate,
+      time: progFormTime,
+      location: progFormLoc,
+      budget: parseFloat(progFormBudget) || 0,
+      status: progFormStatus,
+      file_urls: filesArray,
+      updated_at: new Date().toISOString()
+    };
+
+    if (supabase) {
+      const { error } = await supabase.from('programs').update(updateData).eq('id', selectedProgramId);
+      if (error) {
+        console.error('Supabase error updating program:', error);
+        showToast('Failed to sync changes to database.', 'error');
+        return;
+      }
+    }
+
     const updatedProgs = db.programs.map((p) => {
       if (p.id === selectedProgramId) {
-        return {
-          ...p,
-          name: progFormName,
-          description: progFormDesc,
-          date: progFormDate,
-          time: progFormTime,
-          location: progFormLoc,
-          budget: parseFloat(progFormBudget) || 0,
-          status: progFormStatus,
-          file_urls: filesArray,
-          updated_at: new Date().toISOString()
-        };
+        return { ...p, ...updateData };
       }
       return p;
     });
@@ -406,7 +527,16 @@ export default function App() {
     setCurrentRoute('programs');
   };
 
-  const handleDeleteProgram = (id: number) => {
+  const handleDeleteProgram = async (id: number) => {
+    if (supabase) {
+      const { error } = await supabase.from('programs').delete().eq('id', id);
+      if (error) {
+        console.error('Supabase error deleting program:', error);
+        showToast('Failed to delete program from database.', 'error');
+        return;
+      }
+    }
+
     const updated = db.programs.filter((p) => p.id !== id);
     const updatedPP = db.program_participants.filter((pp) => pp.program_id !== id);
     const updatedExp = db.expenses.filter((e) => e.program_id !== id);
@@ -428,26 +558,30 @@ export default function App() {
   };
 
   // --- PARTICIPANT MANAGEMENT OPERATIONS ---
-  const handleCreateParticipantSubmit = (e: React.FormEvent) => {
+  const handleCreateParticipantSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!partFormFirst || !partFormLast || !partFormEmail) return;
 
-    const nextId = db.participants.length > 0 ? Math.max(...db.participants.map((p) => p.id)) + 1 : 1;
-
-    const newPart: Participant = {
-      id: nextId,
+    const newPart: Omit<Participant, 'id' | 'created_at' | 'updated_at'> = {
       user_id: `user-guest-${Date.now()}`,
       first_name: partFormFirst,
       last_name: partFormLast,
       age: parseInt(partFormAge) || 20,
       contact: partFormCont,
       email: partFormEmail.toLowerCase(),
-      address: partFormAddr || 'Barangay San Francisco, Naga City',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      address: partFormAddr || 'Barangay San Francisco, Naga City'
     };
 
-    updateDBState({ ...db, participants: [...db.participants, newPart] });
+    if (supabase) {
+      const { data, error } = await supabase.from('participants').insert(newPart).select().single();
+      if (error) {
+        console.error('Supabase error creating participant:', error);
+        showToast('Failed to sync resident profile.', 'error');
+        return;
+      }
+      updateDBState({ ...db, participants: [...db.participants, data as Participant] });
+    }
+
     showToast(`Resident profiles created: ${partFormFirst} ${partFormLast}`);
 
     setPartFormFirst('');
@@ -459,21 +593,31 @@ export default function App() {
     setCurrentRoute('participants');
   };
 
-  const handleEditParticipantSubmit = (e: React.FormEvent) => {
+  const handleEditParticipantSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedParticipantId) return;
 
+    const updateData = {
+      first_name: partFormFirst,
+      last_name: partFormLast,
+      age: parseInt(partFormAge) || 20,
+      contact: partFormCont,
+      address: partFormAddr,
+      updated_at: new Date().toISOString()
+    };
+
+    if (supabase) {
+      const { error } = await supabase.from('participants').update(updateData).eq('id', selectedParticipantId);
+      if (error) {
+        console.error('Supabase error updating participant:', error);
+        showToast('Failed to sync participant updates.', 'error');
+        return;
+      }
+    }
+
     const updated = db.participants.map((p) => {
       if (p.id === selectedParticipantId) {
-        return {
-          ...p,
-          first_name: partFormFirst,
-          last_name: partFormLast,
-          age: parseInt(partFormAge) || p.age,
-          contact: partFormCont,
-          address: partFormAddr,
-          updated_at: new Date().toISOString()
-        };
+        return { ...p, ...updateData };
       }
       return p;
     });
@@ -484,7 +628,7 @@ export default function App() {
   };
 
   // --- REGISTRATION APPROVALWORKFLOWS ---
-  const handleJoinProgramSelf = (progId: number) => {
+  const handleJoinProgramSelf = async (progId: number) => {
     // Regular self registration
     const residentPart = db.participants.find((p) => p.user_id === currentUser.id);
     if (!residentPart) {
@@ -511,9 +655,7 @@ export default function App() {
     };
 
     // Insert audit log
-    const regId = db.registrations.length > 0 ? Math.max(...db.registrations.map((r) => r.id)) + 1 : 1;
-    const freshAudit: Registration = {
-      id: regId,
+    const freshAudit: Omit<Registration, 'id'> = {
       program_id: progId,
       participant_id: residentPart.id,
       registration_date: new Date().toISOString(),
@@ -521,15 +663,24 @@ export default function App() {
       notes: 'Initial youth resident self-registration upload slot.'
     };
 
+    if (supabase) {
+      const { error: ppError } = await supabase.from('program_participants').insert(freshPP);
+      const { data: regData, error: regError } = await supabase.from('registrations').insert(freshAudit).select().single();
+      
+      if (ppError || regError) {
+        console.error('Supabase join error:', ppError || regError);
+        showToast('Failed to file join request in database.', 'error');
+        return;
+      }
+
+      updateDBState({
+        ...db,
+        program_participants: [...db.program_participants, freshPP],
+        registrations: [...db.registrations, regData as Registration]
+      });
+    }
+
     const targetProg = db.programs.find(p => p.id === progId);
-
-    // Push state
-    updateDBState({
-      ...db,
-      program_participants: [...db.program_participants, freshPP],
-      registrations: [...db.registrations, freshAudit]
-    });
-
     pushNotification(
       'New Student Join Request',
       `${residentPart.first_name} applied for "${targetProg?.name || 'Program'}"`
@@ -537,9 +688,28 @@ export default function App() {
     showToast('Join request filed. Awaiting SK board validation.', 'success');
   };
 
-  const handleApproveRegistration = (regId: number, notes: string) => {
+  const handleApproveRegistration = async (regId: number, notes: string) => {
     const matchedAudit = db.registrations.find((r) => r.id === regId);
     if (!matchedAudit) return;
+
+    if (supabase) {
+      const { error: regError } = await supabase.from('registrations').update({
+        status: 'approved',
+        notes,
+        approved_by: currentUser.id,
+        approved_at: new Date().toISOString()
+      }).eq('id', regId);
+
+      const { error: ppError } = await supabase.from('program_participants').update({
+        registration_status: 'approved'
+      }).match({ program_id: matchedAudit.program_id, participant_id: matchedAudit.participant_id });
+
+      if (regError || ppError) {
+        console.error('Supabase approval error:', regError || ppError);
+        showToast('Failed to sync approval state.', 'error');
+        return;
+      }
+    }
 
     // Update registration audit
     const updatedAudits = db.registrations.map((r) =>
@@ -577,9 +747,28 @@ export default function App() {
     showToast('Resident program reservation approved.', 'success');
   };
 
-  const handleRejectRegistration = (regId: number, notes: string) => {
+  const handleRejectRegistration = async (regId: number, notes: string) => {
     const matchedAudit = db.registrations.find((r) => r.id === regId);
     if (!matchedAudit) return;
+
+    if (supabase) {
+      const { error: regError } = await supabase.from('registrations').update({
+        status: 'rejected',
+        notes,
+        approved_by: currentUser.id,
+        approved_at: new Date().toISOString()
+      }).eq('id', regId);
+
+      const { error: ppError } = await supabase.from('program_participants').update({
+        registration_status: 'rejected'
+      }).match({ program_id: matchedAudit.program_id, participant_id: matchedAudit.participant_id });
+
+      if (regError || ppError) {
+        console.error('Supabase rejection error:', regError || ppError);
+        showToast('Failed to sync rejection state.', 'error');
+        return;
+      }
+    }
 
     const updatedAudits = db.registrations.map((r) =>
       r.id === regId
@@ -609,7 +798,19 @@ export default function App() {
   };
 
   // --- ATTENDANCE SYSTEM ---
-  const handleUpdateAttendanceState = (progId: number, partId: number, status: ProgramParticipant['attendance_status']) => {
+  const handleUpdateAttendanceState = async (progId: number, partId: number, status: ProgramParticipant['attendance_status']) => {
+    if (supabase) {
+      const { error } = await supabase.from('program_participants').update({
+        attendance_status: status
+      }).match({ program_id: progId, participant_id: partId });
+
+      if (error) {
+        console.error('Supabase attendance error:', error);
+        showToast('Failed to sync attendance update.', 'error');
+        return;
+      }
+    }
+
     const updated = db.program_participants.map((pp) =>
       pp.program_id === progId && pp.participant_id === partId
         ? { ...pp, attendance_status: status }
@@ -621,16 +822,14 @@ export default function App() {
   };
 
   // --- EXPENSE MONITORING CORES ---
-  const handleAddNewGlobalExpense = (e: React.FormEvent) => {
+  const handleAddNewGlobalExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!expFormProgId || !expFormDesc || !expFormAmount || !expFormDate) {
       showToast('Fill in all necessary expense criteria.', 'error');
       return;
     }
 
-    const nextId = db.expenses.length > 0 ? Math.max(...db.expenses.map((ex) => ex.id)) + 1 : 1;
-    const freshEx: Expense = {
-      id: nextId,
+    const freshEx: Omit<Expense, 'id'> = {
       program_id: parseInt(expFormProgId),
       description: expFormDesc,
       amount: parseFloat(expFormAmount),
@@ -640,7 +839,18 @@ export default function App() {
       created_at: new Date().toISOString()
     };
 
-    updateDBState({ ...db, expenses: [...db.expenses, freshEx] });
+    if (supabase) {
+      const { error } = await supabase.from('expenses').insert(freshEx);
+      if (error) {
+        console.error('Supabase error inserting expense:', error);
+        showToast('Failed to sync expense to database.', 'error');
+        return;
+      }
+    } else {
+      const nextId = db.expenses.length > 0 ? Math.max(...db.expenses.map((ex) => ex.id)) + 1 : 1;
+      updateDBState({ ...db, expenses: [...db.expenses, { ...freshEx, id: nextId } as Expense] });
+    }
+
     showToast(`Logged expenditure allocation: ${expFormDesc}`, 'success');
 
     // Reset
@@ -652,45 +862,81 @@ export default function App() {
     setCurrentRoute('expenses');
   };
 
-  const handleAddNewProgramExpense = (progId: number, partialExpense: Omit<Expense, 'id' | 'created_at'>) => {
-    const nextId = db.expenses.length > 0 ? Math.max(...db.expenses.map((ex) => ex.id)) + 1 : 1;
-    const fresh: Expense = {
-      ...partialExpense,
-      id: nextId,
-      created_at: new Date().toISOString()
-    };
-
-    updateDBState({ ...db, expenses: [...db.expenses, fresh] });
+  const handleAddNewProgramExpense = async (progId: number, partialExpense: Omit<Expense, 'id' | 'created_at'>) => {
+    if (supabase) {
+      const { data, error } = await supabase.from('expenses').insert(partialExpense).select().single();
+      if (error) {
+        console.error('Supabase error inserting linked expense:', error);
+        showToast('Failed to sync expense.', 'error');
+        return;
+      }
+      updateDBState({ ...db, expenses: [...db.expenses, data as Expense] });
+    } else {
+      const nextId = db.expenses.length > 0 ? Math.max(...db.expenses.map((ex) => ex.id)) + 1 : 1;
+      const fresh: Expense = {
+        ...partialExpense,
+        id: nextId,
+        created_at: new Date().toISOString()
+      } as Expense;
+      updateDBState({ ...db, expenses: [...db.expenses, fresh] });
+    }
     showToast('Disbursement logged on the fly.', 'success');
   };
 
-  const handleDeleteExpenseGlobal = (id: number) => {
+  const handleDeleteExpenseGlobal = async (id: number) => {
+    if (supabase) {
+      const { error } = await supabase.from('expenses').delete().eq('id', id);
+      if (error) {
+        console.error('Supabase error deleting expense:', error);
+        showToast('Failed to delete expense from database.', 'error');
+        return;
+      }
+    }
     const updated = db.expenses.filter((e) => e.id !== id);
     updateDBState({ ...db, expenses: updated });
     showToast('Expense records updated successfully.', 'info');
   };
 
   // --- FEEDBACK MODULE ---
-  const handlePublishFeedback = (progId: number, rating: number, comment: string) => {
+  const handlePublishFeedback = async (progId: number, rating: number, comment: string) => {
     const resident = db.participants.find((p) => p.user_id === currentUser.id);
     if (!resident) return;
 
-    const nextId = db.feedbacks.length > 0 ? Math.max(...db.feedbacks.map((f) => f.id)) + 1 : 1;
-    const freshFeed: Feedback = {
-      id: nextId,
+    const freshFeed: Omit<Feedback, 'id' | 'created_at'> = {
       program_id: progId,
       participant_id: resident.id,
       rating,
-      comment,
-      created_at: new Date().toISOString()
+      comment
     };
 
-    updateDBState({ ...db, feedbacks: [...db.feedbacks, freshFeed] });
+    if (supabase) {
+      const { data, error } = await supabase.from('feedback').insert(freshFeed).select().single();
+      if (error) {
+        console.error('Supabase error publishing feedback:', error);
+        showToast('Failed to sync evaluation.', 'error');
+        return;
+      }
+      updateDBState({ ...db, feedbacks: [...db.feedbacks, data as Feedback] });
+    } else {
+      const nextId = db.feedbacks.length > 0 ? Math.max(...db.feedbacks.map((f) => f.id)) + 1 : 1;
+      const fresh: Feedback = { ...freshFeed, id: nextId, created_at: new Date().toISOString() } as Feedback;
+      updateDBState({ ...db, feedbacks: [...db.feedbacks, fresh] });
+    }
+    
     showToast('Your program evaluation was logged to Naga LGU auditors.', 'success');
   };
 
   // --- ADMIN USER CONSOLE APPROVALS ---
-  const handleApproveUserAccount = (userId: string) => {
+  const handleApproveUserAccount = async (userId: string) => {
+    if (supabase) {
+      const { error } = await supabase.from('users').update({ is_approved: true }).eq('id', userId);
+      if (error) {
+        console.error('Supabase error approving user:', error);
+        showToast('Failed to approve user in database.', 'error');
+        return;
+      }
+    }
+
     const updatedUsers = db.users.map((u) =>
       u.id === userId ? { ...u, is_approved: true } : u
     );
@@ -863,12 +1109,12 @@ export default function App() {
       doc.line(120, currentY, 180, currentY);
 
       doc.setFont("Helvetica", "normal");
-      doc.text("Patricia Mae S. Reyes", 14, currentY + 4);
+      doc.text("Bernadette Sapo Barrosa", 14, currentY + 4);
       doc.setFont("Helvetica", "bold");
       doc.text("SK Treasurer", 14, currentY + 8);
 
       doc.setFont("Helvetica", "normal");
-      doc.text("Ramon L. Valenzuela", 120, currentY + 4);
+      doc.text("Zaldy D. Bragais Jr.", 120, currentY + 4);
       doc.setFont("Helvetica", "bold");
       doc.text("SK Chairman", 120, currentY + 8);
 
@@ -925,20 +1171,33 @@ export default function App() {
       )}
 
       {/* ROUTING TREE */}
+      {/* PENDING APPROVAL GUARD */}
+      {currentUser.id !== '0' && !currentUser.is_approved && !['landing', 'register', 'login'].includes(currentRoute) && (
+        <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-24 h-24 bg-amber-50 rounded-full flex items-center justify-center mb-6">
+            <Lock className="w-10 h-10 text-amber-600" />
+          </div>
+          <h1 className="text-2xl font-black text-slate-800 mb-2">Account Verification Pending</h1>
+          <p className="text-sm text-slate-500 max-w-sm mb-8">
+            Your youth resident profile has been submitted successfully. Please wait for an SK Official to review and verify your identity before accessing the LGU portal data.
+          </p>
+          <button
+            onClick={() => {
+              supabase?.auth.signOut();
+              setCurrentRoute('landing');
+            }}
+            className="px-6 py-2 bg-slate-900 hover:bg-black text-white font-bold rounded-xl text-xs transition-all cursor-pointer"
+          >
+            Sign Out & Return Home
+          </button>
+        </div>
+      )}
+
       {currentRoute === 'landing' ? (
         <div className="min-h-screen bg-white text-slate-900 font-sans flex flex-col">
           {/* Header */}
           <header className="w-full px-4 md:px-8 py-3 flex items-center justify-between border-b border-slate-200 sticky top-0 bg-white z-50">
             <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2">
-                <div className="flex items-center justify-center relative w-6 h-6 mr-1">
-                  <div className="absolute w-4 h-4 rounded-full border-[3px] border-cyan-400 left-0 top-1 z-10"></div>
-                  <div className="absolute w-4 h-4 rounded-full bg-blue-500 right-0 top-1 opacity-80"></div>
-                </div>
-                <span className="text-xl font-bold text-slate-800 tracking-tight flex items-center gap-1">
-                  <span className="text-[#0d2f3f] font-black mr-1">PMMS</span> <span className="text-[#008f5d]">SK Monitor</span>
-                </span>
-              </div>
               <div className="hidden md:flex ml-4">
                 <span className="px-3 py-1 border border-[#008f5d]/30 text-[#008f5d] text-xs font-semibold rounded-md uppercase tracking-wider">Features</span>
               </div>
@@ -986,19 +1245,6 @@ export default function App() {
                 >
                   Learn More
                 </button>
-              </div>
-
-              {/* Impersonation test block for evaluators */}
-              <div className="pt-10 max-w-sm">
-                <div className="bg-black/20 p-4 rounded-xl border border-white/10 backdrop-blur-sm">
-                   <h4 className="text-[10px] text-white/80 font-bold uppercase tracking-widest text-center mb-3">Test Profiles</h4>
-                   <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => handleRoleImpersonation('admin')} className="p-2 bg-[#125840]/50 hover:bg-[#125840] border border-white/10 rounded text-[10px] font-bold text-white transition-colors">SK Chairman</button>
-                    <button onClick={() => handleRoleImpersonation('skofficial')} className="p-2 bg-[#125840]/50 hover:bg-[#125840] border border-white/10 rounded text-[10px] font-bold text-white transition-colors">Kagawad/Treas.</button>
-                    <button onClick={() => handleRoleImpersonation('regular')} className="p-2 bg-[#125840]/50 hover:bg-[#125840] border border-white/10 rounded text-[10px] font-bold text-white transition-colors">Youth Resident</button>
-                    <button onClick={() => handleRoleImpersonation('viewer')} className="p-2 bg-[#125840]/50 hover:bg-[#125840] border border-white/10 rounded text-[10px] font-bold text-white transition-colors">LGU Visitor</button>
-                   </div>
-                </div>
               </div>
             </div>
 
@@ -1066,6 +1312,66 @@ export default function App() {
             </div>
           </section>
 
+          {/* SK Officials Section */}
+          <section className="bg-slate-50 py-24 px-6 md:px-12 w-full flex-1 border-t border-slate-200" id="officials">
+            <div className="max-w-5xl mx-auto flex flex-col items-center">
+              <h2 className="text-3xl md:text-4xl font-bold text-[#1a1f2e] mb-3 text-center">SK Officials</h2>
+              <p className="text-slate-600 text-lg text-center mb-16 max-w-2xl">
+                The Sangguniang Kabataan of Brgy. San Francisco, Naga City
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
+                {/* Chairman */}
+                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center col-span-1 md:col-span-2 lg:col-span-3 lg:w-1/3 mx-auto">
+                  <h3 className="text-lg font-bold text-[#1a1f2e] mb-1">Hon. Zaldy D. Bragais Jr.</h3>
+                  <p className="text-sm text-emerald-600 font-bold uppercase tracking-wider">SK Chairman</p>
+                </div>
+                
+                {/* Kagawads */}
+                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center">
+                  <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Hon. Luigi Pepito Verdadero</h3>
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">SK Kagawad</p>
+                </div>
+                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center">
+                  <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Hon. Aliyah Jane Masotes Guevarra</h3>
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">SK Kagawad</p>
+                </div>
+                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center">
+                  <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Hon. Ma. Angeline Riel Bok</h3>
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">SK Kagawad</p>
+                </div>
+                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center">
+                  <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Hon. Kailah Mae Batas Balmes</h3>
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">SK Kagawad</p>
+                </div>
+                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center">
+                  <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Hon. Mark Julius Loda Eco</h3>
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">SK Kagawad</p>
+                </div>
+                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center">
+                  <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Hon. Roy Arandia Bragais</h3>
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">SK Kagawad</p>
+                </div>
+                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center">
+                  <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Hon. Mark Angelo Bongon Frago</h3>
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">SK Kagawad</p>
+                </div>
+
+                {/* Sec / Treas */}
+                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center flex flex-col justify-center h-full">
+                  <div>
+                    <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Ms. Bernadette Sapo Barrosa</h3>
+                    <p className="text-xs text-emerald-600 font-bold uppercase tracking-wider mb-4">SK Treasurer</p>
+                  </div>
+                  <div className="pt-4 border-t border-slate-100">
+                    <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Mr. David James Barrameda Ignacio</h3>
+                    <p className="text-xs text-emerald-600 font-bold uppercase tracking-wider">SK Secretary</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
           {/* Footer */}
           <footer className="bg-[#125840] text-teal-50 py-6 px-6 md:px-12 flex flex-col md:flex-row items-center justify-between shrink-0">
             <div className="flex items-center gap-3 mb-4 md:mb-0">
@@ -1081,184 +1387,165 @@ export default function App() {
           </footer>
         </div>
       ) : currentRoute === 'login' ? (
-        <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-6 relative font-sans">
-          <div className="absolute top-4 left-4">
-            <button
+        <div className="min-h-screen bg-[#f8f9fa] text-slate-900 flex flex-col items-center justify-center p-6 relative font-sans">
+          
+          <div className="w-full max-w-md mb-4 flex items-center">
+             <button
               onClick={() => setCurrentRoute('landing')}
-              className="px-3.5 py-2 hover:bg-slate-800 rounded-xl text-xs font-bold text-slate-400 flex items-center gap-1 cursor-pointer"
+              className="flex items-center gap-2 text-sm font-medium hover:text-slate-600 transition-colors"
             >
-              ← Prev
+              <span>←</span> Back to Home
             </button>
           </div>
 
-          <div className="bg-slate-950 border border-slate-800 rounded-3xl p-8 max-w-md w-full space-y-6">
-            <div className="text-center space-y-2">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-600 flex items-center justify-center font-extrabold text-white mx-auto text-sm">
-                SF
+          <div className="bg-white border text-left border-gray-200 rounded-xl p-8 max-w-md w-full shadow-sm">
+            <div className="flex flex-col items-center mb-8">
+              <div className="w-20 h-20 mb-4 rounded-full overflow-hidden flex items-center justify-center p-1">
+                 <img src="/sk_logo.jpg" alt="SK Logo" className="w-full h-full object-contain" />
               </div>
-              <h1 className="text-lg font-black tracking-tight text-white uppercase">Port Sign In</h1>
-              <p className="text-slate-400 text-xs">Access Barangay San Francisco PMMS Console</p>
+              <h1 className="text-2xl font-bold text-black mb-2">Sign In</h1>
+              <p className="text-gray-500 text-sm">Enter your credentials to access your account</p>
             </div>
 
             {loginError && (
-              <div className="p-3 bg-rose-950/50 text-rose-300 rounded-xl border border-rose-800 text-xs flex gap-2 items-center">
-                <AlertCircle className="w-4 h-4 text-rose-500" />
+              <div className="p-3 mb-6 bg-red-50 text-red-600 rounded-lg border border-red-100 text-sm flex gap-2 items-center">
+                <AlertCircle className="w-4 h-4 text-red-500" />
                 <span>{loginError}</span>
               </div>
             )}
 
-            <form onSubmit={handleLoginSubmit} className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-400 uppercase">E-Mail Address</label>
+            <form onSubmit={handleLoginSubmit} className="space-y-5">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-black">Email</label>
                 <input
                   type="email"
                   required
-                  placeholder="e.g. admin@sanfrancisco.gov"
+                  placeholder="Enter your email"
                   value={loginEmail}
                   onChange={(e) => setLoginEmail(e.target.value)}
-                  className="w-full text-xs p-3 border border-slate-800 bg-slate-900 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  className="w-full text-sm p-2.5 px-3 border border-gray-300 bg-white rounded-md focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600 transition-colors"
                 />
+                <p className="text-[11px] text-gray-500 mt-1">Please use the email you registered with</p>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Password</label>
+                  <label className="block text-sm font-medium text-black">Password</label>
                   <button
                     type="button"
                     onClick={() => setCurrentRoute('forgot-password')}
-                    className="text-[10px] text-emerald-400 font-bold hover:underline"
+                    className="text-sm text-teal-600 font-medium hover:underline"
                   >
-                    Forgot Password?
+                    Forgot password?
                   </button>
                 </div>
                 <input
                   type="password"
                   required
-                  placeholder="Password"
+                  placeholder="Enter your password"
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
-                  className="w-full text-xs p-3 border border-slate-800 bg-slate-900 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  className="w-full text-sm p-2.5 px-3 border border-gray-300 bg-white rounded-md focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600 transition-colors"
                 />
               </div>
 
-              <button
-                type="submit"
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-black cursor-pointer shadow-md text-white transition-all uppercase tracking-wider"
-              >
-                Sign In Verified Access
-              </button>
-            </form>
-
-            <div className="text-center text-xs space-y-2 pt-2 border-t border-slate-900">
-              <span className="text-slate-400">New youth resident in Naga City? </span>
-              <button
-                onClick={() => setCurrentRoute('register')}
-                className="text-emerald-400 font-bold hover:underline"
-              >
-                Create Account
-              </button>
-            </div>
-
-            {/* Impersonation list helper */}
-            <div className="bg-slate-900/40 p-3 rounded-2xl space-y-2 border border-slate-900 text-center text-[10px] text-slate-400">
-              <p className="font-bold">Test evaluation logins (seeds):</p>
-              <div className="flex flex-wrap justify-center gap-2">
+              <div className="pt-2">
                 <button
-                  onClick={() => { setLoginEmail('admin@sanfrancisco.gov'); setLoginPassword('chairman'); }}
-                  className="text-[9px] text-rose-400 hover:underline"
+                  type="submit"
+                  className="w-full py-3 bg-[#111111] hover:bg-black rounded-lg text-sm font-medium text-white transition-colors"
                 >
-                  Admin
-                </button>
-                <button
-                  onClick={() => { setLoginEmail('skofficial@sanfrancisco.gov'); setLoginPassword('kagawad'); }}
-                  className="text-[9px] text-blue-400 hover:underline"
-                >
-                  Official
-                </button>
-                <button
-                  onClick={() => { setLoginEmail('regular@sanfrancisco.gov'); setLoginPassword('resident'); }}
-                  className="text-[9px] text-emerald-400 hover:underline"
-                >
-                  Resident
-                </button>
-                <button
-                  onClick={() => { setLoginEmail('viewer@sanfrancisco.gov'); setLoginPassword('viewer'); }}
-                  className="text-[9px] text-amber-400 hover:underline"
-                >
-                  LGU Staff
+                  Sign In
                 </button>
               </div>
+            </form>
+
+            <div className="text-center mt-6 flex flex-col space-y-3">
+              <div className="text-sm text-gray-700">
+                Don't have an account?{' '}
+                <button
+                  onClick={() => setCurrentRoute('register')}
+                  className="text-teal-600 font-medium hover:underline"
+                >
+                  Sign up
+                </button>
+              </div>
+              <p className="text-[11px] text-gray-500">Use the email address you registered with.</p>
             </div>
           </div>
         </div>
       ) : currentRoute === 'register' ? (
-        <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-6 relative font-sans">
-          <div className="absolute top-4 left-4">
+        <div className="min-h-screen bg-[#f8f9fa] text-slate-900 flex flex-col items-center justify-center p-6 relative font-sans">
+          <div className="w-full max-w-md mb-4 flex items-center">
             <button
               onClick={() => setCurrentRoute('landing')}
-              className="px-3.5 py-2 hover:bg-slate-800 rounded-xl text-xs font-bold text-slate-400 flex items-center gap-1 cursor-pointer"
+              className="flex items-center gap-2 text-sm font-medium hover:text-slate-600 transition-colors"
             >
-              ← Cancel
+              <span>←</span> Back to Home
             </button>
           </div>
 
-          <div className="bg-slate-950 border border-slate-800 rounded-3xl p-8 max-w-lg w-full space-y-6">
-            <div className="text-center space-y-2">
-              <h1 className="text-lg font-black tracking-tight text-white uppercase">Youth Sign Up Form</h1>
-              <p className="text-slate-400 text-xs text-center">
+          <div className="bg-white border text-left border-gray-200 rounded-xl p-8 max-w-md w-full shadow-sm">
+            <div className="flex flex-col items-center mb-8">
+              <div className="w-20 h-20 mb-4 rounded-full overflow-hidden flex items-center justify-center p-1">
+                 <img src="/sk_logo.jpg" alt="SK Logo" className="w-full h-full object-contain" />
+              </div>
+              <h1 className="text-2xl font-bold text-black mb-2 text-center">Youth Sign Up Form</h1>
+              <p className="text-gray-500 text-sm text-center">
                 Self-Register as a Youth Resident of Barangay San Francisco, Naga City
               </p>
             </div>
 
             {registerError && (
-              <div className="p-3 bg-rose-950/50 text-rose-300 rounded-xl border border-rose-800 text-xs flex gap-2 items-center">
-                <AlertCircle className="w-4 h-4 text-rose-500" />
+              <div className="p-3 mb-6 bg-red-50 text-red-600 rounded-lg border border-red-100 text-sm flex gap-2 items-center">
+                <AlertCircle className="w-4 h-4 text-red-500" />
                 <span>{registerError}</span>
               </div>
             )}
 
             {registerSuccess && (
-              <div className="p-3 bg-emerald-950/50 text-emerald-300 rounded-xl border border-emerald-800 text-xs space-y-1">
+              <div className="p-3 mb-6 bg-teal-50 text-teal-700 rounded-lg border border-teal-100 text-sm space-y-1">
                 <h4 className="font-bold">Application Sent!</h4>
-                <p>Registration completed successfully. Your resident credentials have been logged. Please wait for SK Chairman Ramon Valenzuela to approve your login credentials.</p>
-                <button
-                  onClick={() => setCurrentRoute('login')}
-                  className="text-white underline font-bold"
-                >
-                  Go to Login screen
-                </button>
+                <p>Registration completed successfully. Your resident credentials have been logged. Please wait for SK Chairman Zaldy D. Bragais Jr. to approve your login credentials.</p>
+                <div className="pt-2">
+                  <button
+                    onClick={() => setCurrentRoute('login')}
+                    className="text-teal-700 underline font-semibold hover:text-teal-800"
+                  >
+                    Go to Login screen
+                  </button>
+                </div>
               </div>
             )}
 
             <form onSubmit={handleRegisterSubmit} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">First Name</label>
+                  <label className="block text-sm font-medium text-black">First Name</label>
                   <input
                     type="text"
                     required
                     placeholder="John Mark"
                     value={registerFirstName}
                     onChange={(e) => setRegisterFirstName(e.target.value)}
-                    className="w-full text-xs p-2.5 border border-slate-800 bg-slate-900 rounded-xl"
+                    className="w-full text-sm p-2.5 px-3 border border-gray-300 bg-white rounded-md focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600 transition-colors"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Last Name</label>
+                  <label className="block text-sm font-medium text-black">Last Name</label>
                   <input
                     type="text"
                     required
                     placeholder="San Jose"
                     value={registerLastName}
                     onChange={(e) => setRegisterLastName(e.target.value)}
-                    className="w-full text-xs p-2.5 border border-slate-800 bg-slate-900 rounded-xl"
+                    className="w-full text-sm p-2.5 px-3 border border-gray-300 bg-white rounded-md focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600 transition-colors"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Age (15 - 30)</label>
+                  <label className="block text-sm font-medium text-black">Age (15 - 30)</label>
                   <input
                     type="number"
                     required
@@ -1267,28 +1554,28 @@ export default function App() {
                     placeholder="Age"
                     value={registerAge}
                     onChange={(e) => setRegisterAge(e.target.value)}
-                    className="w-full text-xs p-2.5 border border-slate-800 bg-slate-900 rounded-xl"
+                    className="w-full text-sm p-2.5 px-3 border border-gray-300 bg-white rounded-md focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600 transition-colors"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Contact Number</label>
+                  <label className="block text-sm font-medium text-black">Contact Number</label>
                   <input
                     type="text"
                     required
                     placeholder="+63 917 123 4567"
                     value={registerContact}
                     onChange={(e) => setRegisterContact(e.target.value)}
-                    className="w-full text-xs p-2.5 border border-slate-800 bg-slate-900 rounded-xl"
+                    className="w-full text-sm p-2.5 px-3 border border-gray-300 bg-white rounded-md focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600 transition-colors"
                   />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-400 uppercase">Youth Address</label>
+                <label className="block text-sm font-medium text-black">Youth Address</label>
                 <select
                   value={registerAddress}
                   onChange={(e) => setRegisterAddress(e.target.value)}
-                  className="w-full text-xs p-2.5 border border-slate-800 bg-slate-900 rounded-xl"
+                  className="w-full text-sm p-2.5 px-3 border border-gray-300 bg-white rounded-md focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600 transition-colors"
                 >
                   <option value="Zone 1, Barangay San Francisco, Naga City">Zone 1, Barangay San Francisco</option>
                   <option value="Zone 2, Barangay San Francisco, Naga City">Zone 2, Barangay San Francisco</option>
@@ -1298,49 +1585,80 @@ export default function App() {
                 </select>
               </div>
 
-              <div className="border-t border-slate-900 pt-4 space-y-4">
+              <div className="border-t border-gray-200 pt-4 space-y-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Desired Role Type</label>
+                  <label className="block text-sm font-medium text-black">Desired Role Type</label>
                   <select
                     value={registerRole}
                     onChange={(e: any) => setRegisterRole(e.target.value)}
-                    className="w-full text-xs p-2.5 border border-slate-800 bg-slate-900 rounded-xl"
+                    className="w-full text-sm p-2.5 px-3 border border-gray-300 bg-white rounded-md focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600 transition-colors"
                   >
-                    <option value="regular">Regular Youth Resident (Requires Admin approval)</option>
+                    <option value="regular">Regular Youth Resident</option>
                     <option value="skofficial">SK Official (Kagawad/Treasurer)</option>
+                    <option value="viewer">LGU Staff / Auditor (Viewer)</option>
                   </select>
                 </div>
 
+                {registerRole === 'skofficial' && (
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium text-black">SK Official Secret Code</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="Enter the secret code for Officials"
+                      value={registerSecretCode}
+                      onChange={(e) => setRegisterSecretCode(e.target.value)}
+                      className="w-full text-sm p-2.5 px-3 border border-gray-300 bg-white rounded-md focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600 transition-colors"
+                    />
+                  </div>
+                )}
+
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Secure Email</label>
+                  <label className="block text-sm font-medium text-black">Secure Email</label>
                   <input
                     type="email"
                     required
                     placeholder="e.g. joshua.v@gmail.com"
                     value={registerEmail}
                     onChange={(e) => setRegisterEmail(e.target.value)}
-                    className="w-full text-xs p-2.5 border border-slate-800 bg-slate-900 rounded-xl"
+                    className="w-full text-sm p-2.5 px-3 border border-gray-300 bg-white rounded-md focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600 transition-colors"
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Security Password</label>
+                  <label className="block text-sm font-medium text-black">Security Password</label>
                   <input
                     type="password"
                     required
                     placeholder="Enter security password"
-                    className="w-full text-xs p-2.5 border border-slate-800 bg-slate-900 rounded-xl"
+                    value={registerPassword}
+                    onChange={(e) => setRegisterPassword(e.target.value)}
+                    className="w-full text-sm p-2.5 px-3 border border-gray-300 bg-white rounded-md focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600 transition-colors"
                   />
                 </div>
               </div>
 
-              <button
-                type="submit"
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition-all uppercase tracking-wide"
-              >
-                Submit Resident Profile
-              </button>
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="w-full py-3 bg-[#111111] hover:bg-black rounded-lg text-sm font-medium text-white transition-colors"
+                >
+                  Submit Resident Profile
+                </button>
+              </div>
             </form>
+            
+            <div className="text-center mt-6 flex flex-col space-y-3">
+              <div className="text-sm text-gray-700">
+                Already have an account?{' '}
+                <button
+                  onClick={() => setCurrentRoute('login')}
+                  className="text-teal-600 font-medium hover:underline"
+                >
+                  Sign in
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       ) : currentRoute === 'forgot-password' ? (
@@ -1388,7 +1706,6 @@ export default function App() {
         /* --- SECURE COMPILATIONS LAYER --- */
         <DashboardLayout
           currentUser={currentUser}
-          onRoleChange={handleRoleImpersonation}
           currentRoute={currentRoute}
           onNavigate={(route) => {
             setCurrentRoute(route);
@@ -1402,7 +1719,7 @@ export default function App() {
           {/* SECURE SUB-PAGES */}
 
           {/* PAGE 1: CORE KPIs FOR OFFICIALS */}
-          {currentRoute === 'dashboard' && (
+          {currentRoute === 'dashboard' && ['admin', 'skofficial', 'viewer'].includes(currentUser.role) && (
             <DashboardView
               programs={db.programs}
               participants={db.participants}
@@ -1410,11 +1727,12 @@ export default function App() {
               onNavigate={(route) => setCurrentRoute(route)}
               onSelectProgram={(id) => { setSelectedProgramId(id); setCurrentRoute('program-detail'); }}
               onSelectParticipant={(id) => { setSelectedParticipantId(id); setCurrentRoute('participant-detail'); }}
+              currentUserRole={currentUser.role}
             />
           )}
 
           {/* PAGE 2: USER PROFILE MY REGISTRATIONS FOR RESIDENTS */}
-          {currentRoute === 'user-dashboard' && (
+          {currentRoute === 'user-dashboard' && currentUser.role === 'regular' && (
             <div className="space-y-6">
               <div className="bg-emerald-800 text-white p-6 rounded-3xl space-y-2">
                 <span className="text-[10px] font-black uppercase tracking-widest bg-emerald-700/50 px-2 py-0.5 rounded border border-white/10">My Portal</span>
@@ -1486,7 +1804,7 @@ export default function App() {
           )}
 
           {/* PAGE 3: PROGRAMS REGISTRY */}
-          {currentRoute === 'programs' && (
+          {currentRoute === 'programs' && ['admin', 'skofficial', 'regular', 'viewer'].includes(currentUser.role) && (
             <div className="space-y-6">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 border border-slate-100 rounded-3xl shadow-3xs">
                 <div>
@@ -1624,7 +1942,7 @@ export default function App() {
           )}
 
           {/* PAGE 4: DETAILED TAB VIEW */}
-          {currentRoute === 'program-detail' && selectedProgramId && (
+          {currentRoute === 'program-detail' && selectedProgramId && ['admin', 'skofficial', 'regular', 'viewer'].includes(currentUser.role) && (
             (() => {
               const matched = db.programs.find((p) => p.id === selectedProgramId);
               if (!matched) return <div className="p-4 text-xs text-slate-400">Program item not found.</div>;
@@ -1653,7 +1971,7 @@ export default function App() {
           )}
 
           {/* PAGE 5: CREATE PROGRAM FORM */}
-          {currentRoute === 'programs-new' && (
+          {currentRoute === 'programs-new' && ['admin', 'skofficial'].includes(currentUser.role) && (
             <div className="bg-white border border-slate-100 p-6 md:p-8 rounded-3xl max-w-xl mx-auto space-y-6">
               <div>
                 <h1 className="text-md font-bold text-slate-800 uppercase tracking-wider">Schedule New Youth Program</h1>
@@ -1779,7 +2097,7 @@ export default function App() {
           )}
 
           {/* PAGE 6: EDIT PROGRAM FORM */}
-          {currentRoute === 'programs-edit' && (
+          {currentRoute === 'programs-edit' && ['admin', 'skofficial'].includes(currentUser.role) && (
             <div className="bg-white border border-slate-100 p-6 md:p-8 rounded-3xl max-w-xl mx-auto space-y-6">
               <div>
                 <h1 className="text-md font-bold text-slate-800 uppercase tracking-wider">Modify Program Registries</h1>
@@ -1896,7 +2214,7 @@ export default function App() {
           )}
 
           {/* PAGE 7: PARTICIPANTS LIST */}
-          {currentRoute === 'participants' && (
+          {currentRoute === 'participants' && ['admin', 'skofficial', 'viewer'].includes(currentUser.role) && (
             <div className="space-y-6">
               <div className="flex items-center justify-between bg-white p-5 border border-slate-100 rounded-3xl shadow-3xs">
                 <div>
@@ -1969,7 +2287,7 @@ export default function App() {
           )}
 
           {/* PAGE 8: ADD PARTICIPANT MANUALLY */}
-          {currentRoute === 'participant-new' && (
+          {currentRoute === 'participant-new' && ['admin', 'skofficial'].includes(currentUser.role) && (
             <div className="bg-white border border-slate-100 p-6 md:p-8 rounded-3xl max-w-xl mx-auto space-y-6">
               <div>
                 <h1 className="text-md font-bold text-slate-800 uppercase tracking-wider">Manual Participant Profile Intake</h1>
@@ -2070,7 +2388,7 @@ export default function App() {
           )}
 
           {/* PAGE 9: PARTICIPANT DETAIL HISTORIES */}
-          {currentRoute === 'participant-detail' && selectedParticipantId && (
+          {currentRoute === 'participant-detail' && selectedParticipantId && ['admin', 'skofficial', 'viewer'].includes(currentUser.role) && (
             (() => {
               const matchedPart = db.participants.find((p) => p.id === selectedParticipantId);
               if (!matchedPart) return <div className="p-4 text-xs text-slate-400">Resident file not found.</div>;
@@ -2179,7 +2497,7 @@ export default function App() {
           )}
 
           {/* PAGE 10: EDIT PARTICIPANT PROFILE */}
-          {currentRoute === 'participant-edit' && selectedParticipantId && (
+          {currentRoute === 'participant-edit' && selectedParticipantId && ['admin', 'skofficial'].includes(currentUser.role) && (
             <div className="bg-white border border-slate-100 p-6 md:p-8 rounded-3xl max-w-xl mx-auto space-y-6">
               <div>
                 <h1 className="text-md font-bold text-slate-800 uppercase tracking-wider">Modify Resident Profiles</h1>
@@ -2262,7 +2580,7 @@ export default function App() {
           )}
 
           {/* PAGE 11: EXPENSES GENERAL LIST LEDGER */}
-          {currentRoute === 'expenses' && (
+          {currentRoute === 'expenses' && ['admin', 'skofficial', 'viewer'].includes(currentUser.role) && (
             <div className="space-y-6">
               <div className="flex items-center justify-between bg-white p-5 border border-slate-100 rounded-3xl shadow-3xs">
                 <div>
@@ -2365,7 +2683,7 @@ export default function App() {
           )}
 
           {/* PAGE 12: LOG GLOBAL EXPENSE FORM */}
-          {currentRoute === 'expenses-new' && (
+          {currentRoute === 'expenses-new' && ['admin', 'skofficial'].includes(currentUser.role) && (
             <div className="bg-white border border-slate-100 p-6 md:p-8 rounded-3xl max-w-xl mx-auto space-y-6">
               <div>
                 <h1 className="text-md font-bold text-slate-800 uppercase tracking-wider">Log General Expense</h1>
@@ -2459,7 +2777,7 @@ export default function App() {
           )}
 
           {/* PAGE 13: FINANCIAL ANALYTICS & PDF REPORTS EXPORT */}
-          {currentRoute === 'expenses-report' && (
+          {currentRoute === 'expenses-report' && ['admin', 'skofficial', 'viewer'].includes(currentUser.role) && (
             <div className="space-y-6">
               <div className="bg-white p-6 border border-slate-100 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-3xs">
                 <div>
@@ -2576,7 +2894,7 @@ export default function App() {
           )}
 
           {/* PAGE 14: USER PROFILE SECURITY UPDATE */}
-          {currentRoute === 'profile' && (
+          {currentRoute === 'profile' && ['admin', 'skofficial', 'regular', 'viewer'].includes(currentUser.role) && (
             <div className="bg-white border border-slate-100 p-6 md:p-8 rounded-3xl max-w-xl mx-auto space-y-6">
               <div>
                 <h1 className="text-md font-bold text-slate-800 uppercase tracking-wider">My User Profile</h1>
@@ -2663,7 +2981,7 @@ export default function App() {
           )}
 
           {/* PAGE 15: ADMIN MANAGE USERS APPROVAL CONSOLE */}
-          {currentRoute === 'admin-users' && (
+          {currentRoute === 'admin-users' && currentUser.role === 'admin' && (
             <div className="space-y-6">
               <div className="bg-white p-5 border border-slate-100 rounded-3xl shadow-3xs">
                 <h1 className="text-md font-bold text-slate-800 uppercase tracking-wider">SK Resident verification center</h1>

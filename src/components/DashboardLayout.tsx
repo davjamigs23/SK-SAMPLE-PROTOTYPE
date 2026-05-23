@@ -27,7 +27,6 @@ import {
 
 interface DashboardLayoutProps {
   currentUser: User;
-  onRoleChange: (role: UserRole) => void;
   currentRoute: string;
   onNavigate: (route: string) => void;
   notifications: AppNotification[];
@@ -38,7 +37,6 @@ interface DashboardLayoutProps {
 
 export default function DashboardLayout({
   currentUser,
-  onRoleChange,
   currentRoute,
   onNavigate,
   notifications,
@@ -109,12 +107,6 @@ export default function DashboardLayout({
       roles: ['admin', 'skofficial', 'viewer']
     },
     {
-      id: 'feedback',
-      label: 'Program Feedback',
-      icon: MessageSquare,
-      roles: ['regular']
-    },
-    {
       id: 'admin-users',
       label: 'Resident Access Approvals',
       icon: UserCheck,
@@ -133,37 +125,6 @@ export default function DashboardLayout({
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
-      {/* Impersonation bar */}
-      <div className="bg-slate-900 text-white text-xs px-4 py-2 flex flex-col sm:flex-row items-center justify-between gap-2 border-b border-slate-800 shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span className="font-semibold text-slate-300">Naga City LGU Evaluator Box:</span>
-          <span className="text-slate-400">Instantly switch permissions to test full role-based access limits.</span>
-        </div>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {(['admin', 'skofficial', 'regular', 'viewer'] as UserRole[]).map((r) => (
-            <button
-              key={r}
-              onClick={() => {
-                onRoleChange(r);
-                if (r === 'regular') {
-                  onNavigate('user-dashboard');
-                } else {
-                  onNavigate('dashboard');
-                }
-              }}
-              className={`px-2.5 py-1 rounded-md text-[10px] font-bold border cursor-pointer hover:bg-slate-800 transition-all ${
-                currentUser.role === r
-                  ? 'bg-emerald-600 text-white border-emerald-500'
-                  : 'bg-slate-950 text-slate-300 border-slate-800'
-              }`}
-            >
-              Impersonate {r.toUpperCase()}
-            </button>
-          ))}
-        </div>
-      </div>
-
       <div className="flex flex-1 relative">
         {/* Sidebar Left Component */}
         <aside
@@ -349,21 +310,12 @@ export default function DashboardLayout({
               <div className="flex items-center gap-2 pl-2 border-l border-slate-100">
                 <div className="hidden md:block text-right">
                   <span className="text-xs font-black block text-slate-800">
-                    {currentUser.role === 'admin' ? 'Hon. R. Valenzuela' : currentUser.role === 'skofficial' ? 'Hon. P. Reyes' : 'Resident Access'}
+                    {currentUser.role === 'admin' ? 'SK Chairman' : currentUser.role === 'skofficial' ? 'SK Official' : currentUser.role === 'regular' ? 'Youth Resident' : 'Viewer'}
                   </span>
                   <span className="text-[10px] text-emerald-600 font-bold block">San Francisco Youth Council</span>
                 </div>
-                <div className="w-9 h-9 rounded-xl overflow-hidden bg-slate-100 border border-slate-200">
-                  <img
-                    src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=256&auto=format&fit=crop"
-                    alt="Current user avatar"
-                    className="w-full h-full object-cover"
-                    onError={(e) => {
-                      // Fallback when offline
-                      (e.target as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
-                  <div className="w-full h-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center uppercase">
+                <div className="w-9 h-9 rounded-xl overflow-hidden bg-emerald-600 border border-slate-200">
+                  <div className="w-full h-full text-white font-bold text-xs flex items-center justify-center uppercase">
                     {currentUser.email.slice(0, 1)}
                   </div>
                 </div>

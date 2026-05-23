@@ -8,6 +8,7 @@ export type UserRole = 'admin' | 'skofficial' | 'regular' | 'viewer';
 export interface User {
   id: string; // UUID from Auth
   email: string;
+  password?: string;
   role: UserRole;
   is_approved: boolean;
   created_at: string;

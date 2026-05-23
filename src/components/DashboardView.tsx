@@ -27,6 +27,7 @@ interface DashboardViewProps {
   onNavigate: (route: string) => void;
   onSelectProgram: (id: number) => void;
   onSelectParticipant: (id: number) => void;
+  currentUserRole: string;
 }
 
 export default function DashboardView({
@@ -35,7 +36,8 @@ export default function DashboardView({
   expenses,
   onNavigate,
   onSelectProgram,
-  onSelectParticipant
+  onSelectParticipant,
+  currentUserRole
 }: DashboardViewProps) {
   // 1. Calculations
   const totalProgramsCount = programs.length;
@@ -116,27 +118,31 @@ export default function DashboardView({
 
         {/* Quick Quick action buttons inside header banner */}
         <div className="relative z-10 flex flex-wrap gap-2 md:items-center">
-          <button
-            onClick={() => onNavigate('programs-new')}
-            className="px-4 py-2 bg-white text-emerald-900 font-bold hover:bg-emerald-50 rounded-xl text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer hover:scale-[1.02]"
-          >
-            <Plus className="w-4 h-4 text-emerald-700" />
-            <span>Create Program</span>
-          </button>
-          <button
-            onClick={() => onNavigate('participant-new')}
-            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-xl text-xs border border-white/10 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer hover:scale-[1.02]"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Add Participant</span>
-          </button>
-          <button
-            onClick={() => onNavigate('expenses-new')}
-            className="px-4 py-2 bg-emerald-900/40 hover:bg-emerald-900/60 text-white font-bold rounded-xl text-xs border border-white/10 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer hover:scale-[1.02]"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Log Expense</span>
-          </button>
+          {['admin', 'skofficial'].includes(currentUserRole) && (
+            <>
+              <button
+                onClick={() => onNavigate('programs-new')}
+                className="px-4 py-2 bg-white text-emerald-900 font-bold hover:bg-emerald-50 rounded-xl text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer hover:scale-[1.02]"
+              >
+                <Plus className="w-4 h-4 text-emerald-700" />
+                <span>Create Program</span>
+              </button>
+              <button
+                onClick={() => onNavigate('participant-new')}
+                className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-xl text-xs border border-white/10 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer hover:scale-[1.02]"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add Participant</span>
+              </button>
+              <button
+                onClick={() => onNavigate('expenses-new')}
+                className="px-4 py-2 bg-emerald-900/40 hover:bg-emerald-900/60 text-white font-bold rounded-xl text-xs border border-white/10 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer hover:scale-[1.02]"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Log Expense</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 

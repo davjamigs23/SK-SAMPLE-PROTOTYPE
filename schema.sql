@@ -7,6 +7,24 @@
 -- Enable UUID functions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Helper function for admin/official checks (bypasses RLS)
+CREATE OR REPLACE FUNCTION public.is_authorized(uid UUID) 
+RETURNS BOOLEAN AS $$
+DECLARE
+  u_role TEXT;
+  u_email TEXT;
+BEGIN
+  SELECT role, email INTO u_role, u_email FROM public.users WHERE id = uid;
+  
+  -- Grant access if role is right OR if it is the primary admin email
+  IF u_role IN ('admin', 'skofficial') OR u_email = 'sksanfrancisconagacity@gmail.com' THEN
+    RETURN TRUE;
+  END IF;
+  
+  RETURN FALSE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
 -- 1. Table: users (Linked with Supabase Auth id)
 CREATE TABLE IF NOT EXISTS public.users (
     id UUID PRIMARY KEY,
@@ -20,7 +38,7 @@ CREATE TABLE IF NOT EXISTS public.users (
 -- 2. Table: participants
 CREATE TABLE IF NOT EXISTS public.participants (
     id BIGSERIAL PRIMARY KEY,
-    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE UNIQUE,
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
     age INTEGER CHECK (age >= 10 AND age <= 100),
@@ -112,36 +130,49 @@ ALTER TABLE public.program_participants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.registrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.feedback ENABLE ROW LEVEL SECURITY;
 
+-- Trigger function to automatically approve the primary admin email
+CREATE OR REPLACE FUNCTION public.handle_new_user_approval()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.email = 'sksanfrancisconagacity@gmail.com' THEN
+    NEW.is_approved := TRUE;
+    NEW.role := 'admin';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER on_user_created_approval
+  BEFORE INSERT ON public.users
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_new_user_approval();
+
 -- users Policies
 CREATE POLICY "Enable read for self" ON public.users FOR SELECT USING (auth.uid() = id);
-CREATE POLICY "Admins & SK Officials full access on users" ON public.users FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role IN ('admin', 'skofficial'))
-);
+CREATE POLICY "Users insert self" ON public.users FOR INSERT WITH CHECK (auth.uid() = id);
+CREATE POLICY "Admins & SK Officials manage users" ON public.users 
+    FOR ALL USING (public.is_authorized(auth.uid()));
 
 -- participants Policies
 CREATE POLICY "Users can see their own profile" ON public.participants FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "Users can create their own profile" ON public.participants FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Users can edit their own profile" ON public.participants FOR UPDATE USING (auth.uid() = user_id);
-CREATE POLICY "Admins & SK Officials can read/write all participants" ON public.participants FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role IN ('admin', 'skofficial'))
-);
+CREATE POLICY "Admins & SK Officials manage participants" ON public.participants FOR ALL USING (public.is_authorized(auth.uid()));
 CREATE POLICY "Viewers read-only participants" ON public.participants FOR SELECT USING (
     EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'viewer')
 );
 
 -- programs Policies
 CREATE POLICY "Programs are readable by authenticated users" ON public.programs FOR SELECT TO authenticated USING (true);
-CREATE POLICY "Admins & SK Officials manage programs" ON public.programs FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role IN ('admin', 'skofficial'))
-);
+CREATE POLICY "Admins & SK Officials manage programs" ON public.programs 
+    FOR ALL USING (public.is_authorized(auth.uid()))
+    WITH CHECK (public.is_authorized(auth.uid()));
 
 -- expenses Policies
-CREATE POLICY "Expenses readable by Admins, SK Officials, and Viewers" ON public.expenses FOR SELECT USING (
-    EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role IN ('admin', 'skofficial', 'viewer'))
+CREATE POLICY "Expenses readable by authorized roles" ON public.expenses FOR SELECT USING (
+    public.is_authorized(auth.uid()) OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'viewer')
 );
-CREATE POLICY "Expenses writable only by Admins & SK Officials" ON public.expenses FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role IN ('admin', 'skofficial'))
-);
+CREATE POLICY "Expenses writable only by Admins & SK Officials" ON public.expenses FOR ALL USING (public.is_authorized(auth.uid()));
 
 -- program_participants Policies
 CREATE POLICY "Participants read self records" ON public.program_participants FOR SELECT USING (
@@ -150,33 +181,42 @@ CREATE POLICY "Participants read self records" ON public.program_participants FO
 CREATE POLICY "Participants join programs" ON public.program_participants FOR INSERT WITH CHECK (
     EXISTS (SELECT 1 FROM public.participants WHERE id = participant_id AND user_id = auth.uid())
 );
-CREATE POLICY "Officials full access on program registrations" ON public.program_participants FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role IN ('admin', 'skofficial'))
-);
+CREATE POLICY "Officials manage registrations" ON public.program_participants FOR ALL USING (public.is_authorized(auth.uid()));
 CREATE POLICY "Viewers read registrations" ON public.program_participants FOR SELECT USING (
     EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'viewer')
 );
 
 -- registrations Policies
-CREATE POLICY "Participants view self registration audit logs" ON public.registrations FOR SELECT USING (
+CREATE POLICY "Participants view self registration logs" ON public.registrations FOR SELECT USING (
     EXISTS (SELECT 1 FROM public.participants WHERE id = participant_id AND user_id = auth.uid())
 );
-CREATE POLICY "Participants insert pending registration log" ON public.registrations FOR INSERT WITH CHECK (
+CREATE POLICY "Participants insert registration log" ON public.registrations FOR INSERT WITH CHECK (
     EXISTS (SELECT 1 FROM public.participants WHERE id = participant_id AND user_id = auth.uid())
 );
-CREATE POLICY "Officials can view and edit registration log" ON public.registrations FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role IN ('admin', 'skofficial'))
-);
+CREATE POLICY "Officials manage registration logs" ON public.registrations FOR ALL USING (public.is_authorized(auth.uid()));
 
 -- feedback Policies
 CREATE POLICY "Authenticated users view feedback" ON public.feedback FOR SELECT TO authenticated USING (true);
-CREATE POLICY "Participants insert feedback for programs they joined" ON public.feedback FOR INSERT WITH CHECK (
+CREATE POLICY "Participants insert feedback" ON public.feedback FOR INSERT WITH CHECK (
     EXISTS (
         SELECT 1 FROM public.participants p
         JOIN public.program_participants pp ON pp.participant_id = p.id
         WHERE p.id = participant_id AND p.user_id = auth.uid() AND pp.program_id = program_id
     )
 );
-CREATE POLICY "Officials full control on feedback" ON public.feedback FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role IN ('admin', 'skofficial'))
-);
+CREATE POLICY "Officials full control on feedback" ON public.feedback FOR ALL USING (public.is_authorized(auth.uid()));
+
+-- ====================================================================
+-- Enable Realtime for all tables
+-- ====================================================================
+BEGIN;
+  DROP PUBLICATION IF EXISTS supabase_realtime;
+  CREATE PUBLICATION supabase_realtime FOR TABLE 
+    public.users, 
+    public.participants, 
+    public.programs, 
+    public.expenses, 
+    public.program_participants, 
+    public.registrations, 
+    public.feedback;
+COMMIT;
