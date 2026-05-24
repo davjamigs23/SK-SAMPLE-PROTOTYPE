@@ -30,6 +30,8 @@ import {
   AppNotification
 } from './types';
 
+import { motion } from "motion/react";
+
 // Components
 import DashboardLayout from './components/DashboardLayout';
 import DashboardView from './components/DashboardView';
@@ -336,7 +338,7 @@ export default function App() {
       }
 
       if (!userData.is_approved) {
-        setLoginError('This account is pending Admin approval. Please contact SK Chairman Zaldy D. Bragais Jr.');
+        setLoginError('Your account is pending verification. Please wait for an SK Official to approve your resident profile.');
         return;
       }
 
@@ -1181,7 +1183,7 @@ export default function App() {
           </div>
           <h1 className="text-2xl font-black text-slate-800 mb-2">Account Verification Pending</h1>
           <p className="text-sm text-slate-500 max-w-sm mb-8">
-            Your youth resident profile has been submitted successfully. Please wait for an SK Official to review and verify your identity before accessing the LGU portal data.
+            Your resident profile has been submitted successfully. Please wait for an SK Official to review and verify your identity before accessing the SK Program Monitoring System.
           </p>
           <button
             onClick={() => {
@@ -1318,60 +1320,134 @@ export default function App() {
             </div>
           </section>
 
-          {/* SK Officials Section */}
-          <section className="bg-slate-50 py-24 px-6 md:px-12 w-full flex-1 border-t border-slate-200" id="officials">
-            <div className="max-w-5xl mx-auto flex flex-col items-center">
-              <h2 className="text-3xl md:text-4xl font-bold text-[#1a1f2e] mb-3 text-center">SK Officials</h2>
-              <p className="text-slate-600 text-lg text-center mb-16 max-w-2xl">
-                The Sangguniang Kabataan of Brgy. San Francisco, Naga City
-              </p>
+          {/* Organizational Chart Section */}
+          <section className="bg-slate-50 py-24 px-6 md:px-12 w-full flex-1 border-t border-slate-200" id="organizational-chart">
+            <div className="max-w-6xl mx-auto flex flex-col items-center">
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                className="text-center mb-16"
+              >
+                <h2 className="text-3xl md:text-4xl font-bold text-[#1a1f2e] mb-3">Organizational Chart</h2>
+                <div className="h-1 w-20 bg-emerald-600 mx-auto rounded-full mb-4"></div>
+                <p className="text-slate-600 text-lg max-w-2xl mx-auto">
+                  Meet the dedicated leaders of the Sangguniang Kabataan of Brgy. San Francisco, Naga City
+                </p>
+              </motion.div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
-                {/* Chairman */}
-                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center col-span-1 md:col-span-2 lg:col-span-3 lg:w-1/3 mx-auto">
-                  <h3 className="text-lg font-bold text-[#1a1f2e] mb-1">Hon. Zaldy D. Bragais Jr.</h3>
-                  <p className="text-sm text-emerald-600 font-bold uppercase tracking-wider">SK Chairman</p>
-                </div>
-                
-                {/* Kagawads */}
-                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center">
-                  <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Hon. Luigi Pepito Verdadero</h3>
-                  <p className="text-xs text-slate-500 uppercase tracking-wider">SK Kagawad</p>
-                </div>
-                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center">
-                  <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Hon. Aliyah Jane Masotes Guevarra</h3>
-                  <p className="text-xs text-slate-500 uppercase tracking-wider">SK Kagawad</p>
-                </div>
-                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center">
-                  <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Hon. Ma. Angeline Riel Bok</h3>
-                  <p className="text-xs text-slate-500 uppercase tracking-wider">SK Kagawad</p>
-                </div>
-                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center">
-                  <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Hon. Kailah Mae Batas Balmes</h3>
-                  <p className="text-xs text-slate-500 uppercase tracking-wider">SK Kagawad</p>
-                </div>
-                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center">
-                  <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Hon. Mark Julius Loda Eco</h3>
-                  <p className="text-xs text-slate-500 uppercase tracking-wider">SK Kagawad</p>
-                </div>
-                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center">
-                  <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Hon. Roy Arandia Bragais</h3>
-                  <p className="text-xs text-slate-500 uppercase tracking-wider">SK Kagawad</p>
-                </div>
-                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center">
-                  <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Hon. Mark Angelo Bongon Frago</h3>
-                  <p className="text-xs text-slate-500 uppercase tracking-wider">SK Kagawad</p>
+              <div className="w-full space-y-12">
+                {/* Level 1: Chairperson clouds */}
+                <div className="flex justify-center">
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    whileInView={{ opacity: 1, scale: 1 }}
+                    viewport={{ once: true }}
+                    className="bg-white rounded-2xl p-6 border-2 border-emerald-600 shadow-xl text-center w-full max-w-sm relative"
+                  >
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-600 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest z-20">Chairperson</div>
+                    
+                    <div className="w-24 h-24 mx-auto mb-4 rounded-full overflow-hidden border-4 border-emerald-50 shadow-inner bg-slate-50">
+                      <img src="/input_file_0.png" alt="Hon. Zaldy D. Bragais Jr." className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    </div>
+
+                    <h3 className="text-xl font-black text-[#1a1f2e] mb-1">Hon. Zaldy D. Bragais Jr.</h3>
+                    <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">SK Chairperson</p>
+                  </motion.div>
                 </div>
 
-                {/* Sec / Treas */}
-                <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm text-center flex flex-col justify-center h-full">
-                  <div>
-                    <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Ms. Bernadette Sapo Barrosa</h3>
-                    <p className="text-xs text-emerald-600 font-bold uppercase tracking-wider mb-4">SK Treasurer</p>
-                  </div>
-                  <div className="pt-4 border-t border-slate-100">
-                    <h3 className="text-md font-bold text-[#1a1f2e] mb-1">Mr. David James Barrameda Ignacio</h3>
+                {/* Connectors */}
+                <div className="hidden md:flex justify-center h-8">
+                  <div className="w-px bg-slate-200"></div>
+                </div>
+
+                {/* Level 2: Secretary & Treasurer */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-3xl mx-auto">
+                  <motion.div 
+                    initial={{ opacity: 0, x: -20 }}
+                    whileInView={{ opacity: 1, x: 0 }}
+                    viewport={{ once: true }}
+                    className="bg-white rounded-2xl p-6 border border-slate-200 shadow-lg text-center relative"
+                  >
+                    <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[9px] font-bold px-3 py-0.5 rounded-full uppercase tracking-widest z-20">Secretariat</div>
+                    
+                    <div className="w-16 h-16 mx-auto mb-3 rounded-full overflow-hidden border-2 border-slate-50 bg-slate-50">
+                      <img src="/input_file_2.png" alt="David James Ignacio" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    </div>
+
+                    <h3 className="text-lg font-bold text-[#1a1f2e] mb-0.5">David James Ignacio</h3>
                     <p className="text-xs text-emerald-600 font-bold uppercase tracking-wider">SK Secretary</p>
+                  </motion.div>
+                  <motion.div 
+                    initial={{ opacity: 0, x: 20 }}
+                    whileInView={{ opacity: 1, x: 0 }}
+                    viewport={{ once: true }}
+                    className="bg-white rounded-2xl p-6 border border-slate-200 shadow-lg text-center relative"
+                  >
+                    <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[9px] font-bold px-3 py-0.5 rounded-full uppercase tracking-widest z-20">Finance</div>
+                    
+                    <div className="w-16 h-16 mx-auto mb-3 rounded-full overflow-hidden border-2 border-slate-50 bg-slate-50">
+                      <img src="/input_file_1.png" alt="Bernadette Barrosa" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    </div>
+
+                    <h3 className="text-lg font-bold text-[#1a1f2e] mb-0.5">Bernadette Barrosa</h3>
+                    <p className="text-xs text-emerald-600 font-bold uppercase tracking-wider">SK Treasurer</p>
+                  </motion.div>
+                </div>
+
+                {/* Level 3: Kagawads Grid */}
+                <div className="space-y-8 pt-8">
+                  <div className="text-center">
+                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] mb-8">SK Kagawads (Council Members)</h4>
+                  </div>
+                  
+                  {/* First Row: 4 Members */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                    {[
+                      { name: "Hon. Kailah Mae Balmes", role: "SK Kagawad", img: "/input_file_9.png" },
+                      { name: "Hon. Luigi Verdadero", role: "SK Kagawad", img: "/input_file_3.png" },
+                      { name: "Hon. Aliyah Guevarra", role: "SK Kagawad", img: "/input_file_4.png" },
+                      { name: "Hon. Ma. Angeline Bok", role: "SK Kagawad", img: "/input_file_5.png" }
+                    ].map((member, idx) => (
+                      <motion.div 
+                        key={member.name}
+                        initial={{ opacity: 0, y: 10 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        viewport={{ once: true }}
+                        transition={{ delay: idx * 0.05 }}
+                        className="bg-white rounded-xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-shadow text-center group"
+                      >
+                        <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 overflow-hidden border border-slate-100 group-hover:border-emerald-200 transition-colors">
+                          <img src={member.img} alt={member.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" referrerPolicy="no-referrer" />
+                        </div>
+                        <h3 className="text-sm font-bold text-[#1a1f2e] mb-1">{member.name}</h3>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black">{member.role}</p>
+                      </motion.div>
+                    ))}
+                  </div>
+
+                  {/* Second Row: 3 Members Centered */}
+                  <div className="flex flex-wrap justify-center gap-6">
+                    {[
+                      { name: "Hon. Mark Angelo Frago", role: "SK Kagawad", img: "/input_file_8.png" },
+                      { name: "Hon. Roy Bragais", role: "SK Kagawad", img: "/input_file_6.png" },
+                      { name: "Hon. Julius Eco", role: "SK Kagawad", img: "/input_file_7.png" }
+                    ].map((member, idx) => (
+                      <motion.div 
+                        key={member.name}
+                        initial={{ opacity: 0, y: 10 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        viewport={{ once: true }}
+                        transition={{ delay: (idx + 4) * 0.05 }}
+                        className="bg-white rounded-xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-shadow text-center group w-full sm:w-[calc(50%-12px)] lg:w-[calc(25%-18px)]"
+                      >
+                        <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 overflow-hidden border border-slate-100 group-hover:border-emerald-200 transition-colors">
+                          <img src={member.img} alt={member.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" referrerPolicy="no-referrer" />
+                        </div>
+                        <h3 className="text-sm font-bold text-[#1a1f2e] mb-1">{member.name}</h3>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black">{member.role}</p>
+                      </motion.div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -1495,9 +1571,9 @@ export default function App() {
               <div className="w-24 h-24 mb-4 rounded-full overflow-hidden flex items-center justify-center p-1 border-2 border-slate-100 shadow-sm bg-white">
                  <img src="/Sk_logo.jpg" alt="SK Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
               </div>
-              <h1 className="text-2xl font-bold text-black mb-2 text-center">Youth Sign Up Form</h1>
+              <h1 className="text-2xl font-bold text-black mb-2 text-center">Registration</h1>
               <p className="text-gray-500 text-sm text-center">
-                Self-Register as a Youth Resident of Barangay San Francisco, Naga City
+                Create your account for the SK Program Monitoring System
               </p>
             </div>
 
@@ -1577,7 +1653,7 @@ export default function App() {
               </div>
 
               <div className="space-y-1">
-                <label className="block text-sm font-medium text-black">Youth Address</label>
+                <label className="block text-sm font-medium text-black">Address</label>
                 <select
                   value={registerAddress}
                   onChange={(e) => setRegisterAddress(e.target.value)}
@@ -1593,21 +1669,21 @@ export default function App() {
 
               <div className="border-t border-gray-200 pt-4 space-y-4">
                 <div className="space-y-1">
-                  <label className="block text-sm font-medium text-black">Desired Role Type</label>
+                  <label className="block text-sm font-medium text-black">Account Type</label>
                   <select
                     value={registerRole}
                     onChange={(e: any) => setRegisterRole(e.target.value)}
                     className="w-full text-sm p-2.5 px-3 border border-gray-300 bg-white rounded-md focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600 transition-colors"
                   >
-                    <option value="regular">Regular Youth Resident</option>
-                    <option value="skofficial">SK Official (Kagawad/Treasurer)</option>
-                    <option value="viewer">LGU Staff / Auditor (Viewer)</option>
+                    <option value="regular">Youth Resident</option>
+                    <option value="skofficial">SK Official</option>
+                    <option value="viewer">Auditor (Viewer)</option>
                   </select>
                 </div>
 
                 {registerRole === 'skofficial' && (
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium text-black">SK Official Secret Code</label>
+                    <label className="block text-sm font-medium text-black">Secret Access Code</label>
                     <input
                       type="password"
                       required
@@ -1620,7 +1696,7 @@ export default function App() {
                 )}
 
                 <div className="space-y-1">
-                  <label className="block text-sm font-medium text-black">Secure Email</label>
+                  <label className="block text-sm font-medium text-black">Email Address</label>
                   <input
                     type="email"
                     required
@@ -1632,7 +1708,7 @@ export default function App() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="block text-sm font-medium text-black">Security Password</label>
+                  <label className="block text-sm font-medium text-black">Password</label>
                   <input
                     type="password"
                     required
@@ -1649,7 +1725,7 @@ export default function App() {
                   type="submit"
                   className="w-full py-3 bg-[#111111] hover:bg-black rounded-lg text-sm font-medium text-white transition-colors"
                 >
-                  Submit Resident Profile
+                  Submit
                 </button>
               </div>
             </form>

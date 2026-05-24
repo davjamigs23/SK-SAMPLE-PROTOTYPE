@@ -63,9 +63,9 @@ export default function DashboardLayout({
   const getRoleLabel = (role: UserRole) => {
     switch (role) {
       case 'admin': return 'SK Chairman (Admin)';
-      case 'skofficial': return 'SK Kagawad/Treas. (Official)';
+      case 'skofficial': return 'SK Official';
       case 'regular': return 'Youth Resident';
-      case 'viewer': return 'Barangay LGU Visitor';
+      case 'viewer': return 'Auditor (Viewer)';
     }
   };
 
@@ -310,7 +310,7 @@ export default function DashboardLayout({
               <div className="flex items-center gap-2 pl-2 border-l border-slate-100">
                 <div className="hidden md:block text-right">
                   <span className="text-xs font-black block text-slate-800">
-                    {currentUser.role === 'admin' ? 'SK Chairman' : currentUser.role === 'skofficial' ? 'SK Official' : currentUser.role === 'regular' ? 'Youth Resident' : 'Viewer'}
+                    {currentUser.role === 'admin' ? 'SK Chairman' : currentUser.role === 'skofficial' ? 'SK Official' : currentUser.role === 'regular' ? 'Youth Resident' : 'Auditor (Viewer)'}
                   </span>
                   <span className="text-[10px] text-emerald-600 font-bold block">San Francisco Youth Council</span>
                 </div>
