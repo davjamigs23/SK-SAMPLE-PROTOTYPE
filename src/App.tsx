@@ -238,7 +238,7 @@ export default function App() {
         
         if (!data && !error) {
           // User is in auth but not in public.users - sync them
-          const isAdmin = ['sksanfrancisconagacity@gmail.com', 'djignaci1@gmail.com'].includes(session.user.email?.toLowerCase() || '');
+          const isAdmin = ['sksanfrancisconagacity@gmail.com'].includes(session.user.email?.toLowerCase() || '');
           const { data: newData, error: insertError } = await supabase.from('users').upsert({
             id: session.user.id,
             email: session.user.email?.toLowerCase() || '',
@@ -335,7 +335,11 @@ export default function App() {
       });
 
       if (error) {
-        setLoginError('Invalid credentials or account not verified.');
+        if (error.message.includes('Email not confirmed')) {
+          setLoginError('Sign in failed: Email has not been confirmed. Please check your inbox for a verification link from Supabase.');
+        } else {
+          setLoginError('Invalid credentials or account not verified. Please double-check your email and password.');
+        }
         return;
       }
 
@@ -411,7 +415,7 @@ export default function App() {
       }
 
       // 2. Upsert record into public.users
-      const isAdmin = ['sksanfrancisconagacity@gmail.com', 'djignaci1@gmail.com'].includes(registerEmail.toLowerCase());
+      const isAdmin = ['sksanfrancisconagacity@gmail.com'].includes(registerEmail.toLowerCase());
       const { error: userError } = await supabase.from('users').upsert({
         id: userId,
         email: registerEmail.toLowerCase(),
@@ -1234,9 +1238,7 @@ export default function App() {
                 <img src="/Sk_logo.jpg" alt="SK Logo" className="w-8 h-8 object-contain" referrerPolicy="no-referrer" />
                 <span className="font-black text-slate-800 tracking-tight text-sm hidden sm:block">SK SAN FRANCISCO</span>
               </div>
-              <div className="hidden md:flex ml-4">
-                <span className="px-3 py-1 border border-[#008f5d]/30 text-[#008f5d] text-xs font-semibold rounded-md uppercase tracking-wider">Features</span>
-              </div>
+
             </div>
             <div className="flex items-center gap-3">
               <button
@@ -1433,9 +1435,9 @@ export default function App() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                     {[
                       { name: "Hon. Kailah Mae Balmes", role: "SK Kagawad", img: "/input_file_9.png" },
-                      { name: "Hon. Luigi Verdadero", role: "SK Kagawad", img: "/input_file_3.png" },
-                      { name: "Hon. Aliyah Guevarra", role: "SK Kagawad", img: "/input_file_4.png" },
-                      { name: "Hon. Ma. Angeline Bok", role: "SK Kagawad", img: "/input_file_5.png" }
+                      { name: "Hon. Luigi Verdadero", role: "SK Kagawad", img: "/luigi.jpg" },
+                      { name: "Hon. Aliyah Guevarra", role: "SK Kagawad", img: "/aliyah.jpg" },
+                      { name: "Hon. Ma. Angeline Bok", role: "SK Kagawad", img: "/angeline.jpg" }
                     ].map((member, idx) => (
                       <motion.div 
                         key={member.name}
@@ -1705,7 +1707,7 @@ export default function App() {
                   >
                     <option value="regular">Youth Resident</option>
                     <option value="skofficial">SK Official</option>
-                    <option value="viewer">Auditor (Viewer)</option>
+                    <option value="viewer">Viewer</option>
                   </select>
                 </div>
 

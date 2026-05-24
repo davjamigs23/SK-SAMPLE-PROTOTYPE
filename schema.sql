@@ -18,7 +18,7 @@ BEGIN
   
   -- Grant access if role is right OR if it matches known admin emails
   IF u_role IN ('admin', 'skofficial') 
-     OR u_email IN ('sksanfrancisconagacity@gmail.com', 'djignaci1@gmail.com') THEN
+     OR u_email IN ('sksanfrancisconagacity@gmail.com') THEN
     RETURN TRUE;
   END IF;
   
@@ -135,7 +135,7 @@ ALTER TABLE public.feedback ENABLE ROW LEVEL SECURITY;
 CREATE OR REPLACE FUNCTION public.handle_new_user_approval()
 RETURNS TRIGGER AS $$
 BEGIN
-  IF NEW.email IN ('sksanfrancisconagacity@gmail.com', 'djignaci1@gmail.com') THEN
+  IF NEW.email IN ('sksanfrancisconagacity@gmail.com') THEN
     NEW.is_approved := TRUE;
     NEW.role := 'admin';
   END IF;

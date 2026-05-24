@@ -5,4 +5,7 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 // Create a single supabase client for interacting with your database
 export const isSupabaseConfigured = !!(supabaseUrl && supabaseKey);
-export const supabase = isSupabaseConfigured ? createClient(supabaseUrl, supabaseKey) : null;
+export const supabase = createClient(
+  supabaseUrl || 'https://placeholder-url.supabase.co',
+  supabaseKey || 'placeholder-key'
+);
