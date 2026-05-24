@@ -16,8 +16,9 @@ DECLARE
 BEGIN
   SELECT role, email INTO u_role, u_email FROM public.users WHERE id = uid;
   
-  -- Grant access if role is right OR if it is the primary admin email
-  IF u_role IN ('admin', 'skofficial') OR u_email = 'sksanfrancisconagacity@gmail.com' THEN
+  -- Grant access if role is right OR if it matches known admin emails
+  IF u_role IN ('admin', 'skofficial') 
+     OR u_email IN ('sksanfrancisconagacity@gmail.com', 'djignaci1@gmail.com') THEN
     RETURN TRUE;
   END IF;
   
@@ -130,11 +131,11 @@ ALTER TABLE public.program_participants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.registrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.feedback ENABLE ROW LEVEL SECURITY;
 
--- Trigger function to automatically approve the primary admin email
+-- Trigger function to automatically approve the primary admin emails
 CREATE OR REPLACE FUNCTION public.handle_new_user_approval()
 RETURNS TRIGGER AS $$
 BEGIN
-  IF NEW.email = 'sksanfrancisconagacity@gmail.com' THEN
+  IF NEW.email IN ('sksanfrancisconagacity@gmail.com', 'djignaci1@gmail.com') THEN
     NEW.is_approved := TRUE;
     NEW.role := 'admin';
   END IF;
@@ -150,6 +151,7 @@ CREATE TRIGGER on_user_created_approval
 -- users Policies
 CREATE POLICY "Enable read for self" ON public.users FOR SELECT USING (auth.uid() = id);
 CREATE POLICY "Users insert self" ON public.users FOR INSERT WITH CHECK (auth.uid() = id);
+CREATE POLICY "Users update self" ON public.users FOR UPDATE USING (auth.uid() = id);
 CREATE POLICY "Admins & SK Officials manage users" ON public.users 
     FOR ALL USING (public.is_authorized(auth.uid()));
 

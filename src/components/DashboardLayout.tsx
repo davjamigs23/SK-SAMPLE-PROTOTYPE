@@ -135,8 +135,8 @@ export default function DashboardLayout({
           {/* Sidebar Header */}
           <div className="h-18 px-6 border-b border-slate-50 flex items-center justify-between shrink-0 bg-gradient-to-r from-emerald-600/5 to-white">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-600 flex items-center justify-center text-white font-extrabold shadow-sm shadow-emerald-600/30">
-                <span className="text-sm tracking-wide">SK</span>
+              <div className="w-12 h-12 rounded-xl bg-white flex items-center justify-center overflow-hidden border border-slate-100 shadow-sm">
+                <img src="/Sk_logo.jpg" alt="SK Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
               </div>
               <div>
                 <h1 className="text-xs font-black text-slate-900 tracking-wide uppercase">San Francisco</h1>
