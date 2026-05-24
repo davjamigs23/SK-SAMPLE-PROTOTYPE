@@ -73,12 +73,16 @@ import {
 } from 'lucide-react';
 
 import { jsPDF } from 'jspdf';
-import { supabase } from './lib/supabase';
+import { supabase, isSupabaseConfigured } from './lib/supabase';
 
 export default function App() {
   // --- DATABASE & SESSION STATES ---
   const [db, setDb] = useState<SKDatabase>(getStoredDB());
-  const [currentUser, setCurrentUser] = useState<User>(db.users[0]); // Default to first (admin) for evaluation ease
+  
+  // Set initial user: 
+  // If Supabase is configured, we start as null (forcing a real login).
+  // If not, we start as the seeded admin to allow immediate demoing.
+  const [currentUser, setCurrentUser] = useState<User | null>(isSupabaseConfigured ? null : db.users[0]);
   const [currentRoute, setCurrentRoute] = useState<string>('landing');
 
   // --- FORM INPUT STATES ---
@@ -177,7 +181,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabase || !isSupabaseConfigured) return;
 
     // 1. Load initial state from Supabase
     const fetchState = async () => {
@@ -249,12 +253,12 @@ export default function App() {
 
         if (data) {
           setCurrentUser(data as User);
-          if (currentRoute === 'landing') {
+          if (currentRoute === 'landing' || currentRoute === 'login') {
              setCurrentRoute(data.role === 'regular' ? 'user-dashboard' : 'dashboard');
           }
         }
       } else {
-        setCurrentUser(getStoredDB().users[0]);
+        setCurrentUser(isSupabaseConfigured ? null : getStoredDB().users[0]);
         if (['dashboard', 'user-dashboard', 'programs', 'participants', 'expenses', 'reports'].includes(currentRoute)) {
            setCurrentRoute('landing');
         }
@@ -309,8 +313,18 @@ export default function App() {
       return;
     }
 
-    if (!supabase) {
-      setLoginError('Database connection not initialized.');
+    // FALLBACK: If Supabase is not configured, allow signing in with seeded users for testing
+    if (!isSupabaseConfigured || !supabase) {
+      const localMatch = db.users.find(u => u.email === loginEmail && u.password === loginPassword);
+      if (localMatch) {
+         setCurrentUser(localMatch);
+         showToast(`Local Mode: Welcome ${localMatch.email}!`, 'info');
+         setCurrentRoute(localMatch.role === 'regular' ? 'user-dashboard' : 'dashboard');
+         setLoginEmail('');
+         setLoginPassword('');
+      } else {
+         setLoginError('Local Mode: User not found in seed data. Please configure Supabase for real accounts.');
+      }
       return;
     }
 
@@ -333,7 +347,7 @@ export default function App() {
         .single();
       
       if (userError || !userData) {
-         setLoginError('User profile not found. Please contact administrator.');
+         setLoginError('Login successful, but profile table not found. Please ensure Supabase tables are created.');
          return;
       }
 
@@ -1158,8 +1172,22 @@ export default function App() {
     setCurrentRoute('participant-edit');
   };
 
+  // --- RENDERING ROUTER ---
+  if (!currentUser && !['landing', 'login', 'register', 'forgot-password'].includes(currentRoute)) {
+    // If somehow lost session, force to landing
+    return <div className="flex items-center justify-center min-h-screen">Redirecting to login...</div>;
+  }
+
   return (
     <div className="relative min-h-screen bg-slate-50">
+      {/* Supabase Status Indicator */}
+      {!isSupabaseConfigured && (
+        <div className="fixed top-2 right-2 z-[60] bg-amber-50 border border-amber-200 px-3 py-1 rounded-full flex items-center gap-2 shadow-sm pointer-events-none opacity-80 sm:opacity-100">
+           <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></div>
+           <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">Local Demo Mode</span>
+        </div>
+      )}
+      
       {/* Toast Alert pop */}
       {activeToast && (
         <div className="fixed bottom-6 right-6 z-50 p-4 bg-slate-900 border border-slate-800 text-white rounded-2xl shadow-xl flex items-center gap-3 transition-all duration-300 transform animate-bounce">
@@ -1176,7 +1204,7 @@ export default function App() {
 
       {/* ROUTING TREE */}
       {/* PENDING APPROVAL GUARD */}
-      {currentUser.id !== '0' && !currentUser.is_approved && !['landing', 'register', 'login'].includes(currentRoute) && (
+      {currentUser && currentUser.id !== '0' && currentUser.id !== 'user-admin-1' && !currentUser.is_approved && !['landing', 'register', 'login'].includes(currentRoute) && (
         <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 text-center">
           <div className="w-24 h-24 bg-amber-50 rounded-full flex items-center justify-center mb-6">
             <Lock className="w-10 h-10 text-amber-600" />
@@ -1348,7 +1376,7 @@ export default function App() {
                     <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-600 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest z-20">Chairperson</div>
                     
                     <div className="w-24 h-24 mx-auto mb-4 rounded-full overflow-hidden border-4 border-emerald-50 shadow-inner bg-slate-50">
-                      <img src="/input_file_0.png" alt="Hon. Zaldy D. Bragais Jr." className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      <img src="/chairman.jpg" alt="Hon. Zaldy D. Bragais Jr." className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     </div>
 
                     <h3 className="text-xl font-black text-[#1a1f2e] mb-1">Hon. Zaldy D. Bragais Jr.</h3>
@@ -1372,7 +1400,7 @@ export default function App() {
                     <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[9px] font-bold px-3 py-0.5 rounded-full uppercase tracking-widest z-20">Secretariat</div>
                     
                     <div className="w-16 h-16 mx-auto mb-3 rounded-full overflow-hidden border-2 border-slate-50 bg-slate-50">
-                      <img src="/input_file_2.png" alt="David James Ignacio" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      <img src="/secretary.jpg" alt="David James Ignacio" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     </div>
 
                     <h3 className="text-lg font-bold text-[#1a1f2e] mb-0.5">David James Ignacio</h3>
@@ -1387,7 +1415,7 @@ export default function App() {
                     <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[9px] font-bold px-3 py-0.5 rounded-full uppercase tracking-widest z-20">Finance</div>
                     
                     <div className="w-16 h-16 mx-auto mb-3 rounded-full overflow-hidden border-2 border-slate-50 bg-slate-50">
-                      <img src="/input_file_1.png" alt="Bernadette Barrosa" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      <img src="/treasurer.jpg" alt="Bernadette Barrosa" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     </div>
 
                     <h3 className="text-lg font-bold text-[#1a1f2e] mb-0.5">Bernadette Barrosa</h3>
