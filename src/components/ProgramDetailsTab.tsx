@@ -83,6 +83,19 @@ export default function ProgramDetailsTab({
     }).format(val);
   };
 
+  if (!program) {
+    return (
+      <div className="p-8 text-center bg-white border rounded-3xl space-y-4">
+        <AlertTriangle className="w-12 h-12 text-amber-500 mx-auto" />
+        <h2 className="text-sm font-bold text-slate-800">Program record not found.</h2>
+        <p className="text-xs text-slate-400">The requested program index does not exist in our current database registry.</p>
+        <button onClick={onBack} className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold font-sans">
+          Return to Registry
+        </button>
+      </div>
+    );
+  }
+
   // Get participant list filtered for this specific program from the junction table
   const programMembers = programParticipants
     .filter((pp) => pp.program_id === program.id)

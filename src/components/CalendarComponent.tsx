@@ -172,7 +172,7 @@ export default function CalendarComponent({ programs, onSelectProgram }: Calenda
                     <div className="font-semibold truncate">{p.name}</div>
                     <div className="opacity-85 text-[8px] flex items-center gap-1 truncate">
                       <Clock className="w-2 h-2 shrink-0 inline-block" />
-                      <span>{p.time.split('-')[0].trim()}</span>
+                      <span>{p.time ? p.time.split('-')[0].trim() : 'N/A'}</span>
                     </div>
                   </button>
                 ))}

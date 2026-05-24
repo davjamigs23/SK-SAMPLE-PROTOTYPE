@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import * as React from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   getStoredDB,
   saveStoredDB,
@@ -76,13 +77,25 @@ import { jsPDF } from 'jspdf';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 
 // Error Boundary Component
-class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
-  constructor(props: { children: React.ReactNode }) {
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: any;
+}
+
+class ErrorBoundary extends (React.Component as any)<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState;
+  props: ErrorBoundaryProps;
+
+  constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null };
   }
 
-  static getDerivedStateFromError(error: any) {
+  static getDerivedStateFromError(error: any): ErrorBoundaryState {
     return { hasError: true, error };
   }
 
@@ -274,6 +287,7 @@ function AppContent() {
         
         // Ensure currentUser updates if their profile was changed
         setCurrentUser(prevUser => {
+          if (!prevUser) return null;
           const matched = remoteDb.users.find(u => u.id === prevUser.id);
           return matched || prevUser;
         });
@@ -520,8 +534,8 @@ function AppContent() {
   // --- PROGRAM MANAGEMENT OPERATIONS ---
   const handleCreateProgramSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!progFormName || !progFormDate || !progFormLoc) {
-      showToast('Program parameters missing!', 'error');
+    if (!progFormName || !progFormDate || !progFormLoc || !currentUser) {
+      showToast('Program parameters missing or unauthorized session!', 'error');
       return;
     }
 
@@ -904,8 +918,8 @@ function AppContent() {
   // --- EXPENSE MONITORING CORES ---
   const handleAddNewGlobalExpense = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!expFormProgId || !expFormDesc || !expFormAmount || !expFormDate) {
-      showToast('Fill in all necessary expense criteria.', 'error');
+    if (!expFormProgId || !expFormDesc || !expFormAmount || !expFormDate || !currentUser) {
+      showToast('Fill in all necessary expense criteria or session lost.', 'error');
       return;
     }
 
