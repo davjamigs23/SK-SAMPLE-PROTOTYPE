@@ -75,7 +75,61 @@ import {
 import { jsPDF } from 'jspdf';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 
+// Error Boundary Component
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("ErrorBoundary caught:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6 font-sans">
+          <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-xl max-w-lg w-full text-center space-y-4">
+            <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+              <AlertCircle className="w-8 h-8" />
+            </div>
+            <h1 className="text-xl font-bold text-slate-900">Application Error</h1>
+            <p className="text-sm text-slate-500">Something went wrong while rendering the application. This might be due to a synchronization issue or invalid session state.</p>
+            <div className="bg-slate-50 p-4 rounded-xl text-left overflow-auto max-h-40">
+              <pre className="text-[10px] text-slate-600 leading-relaxed font-mono">
+                {this.state.error?.message || String(this.state.error)}
+              </pre>
+            </div>
+            <button 
+              onClick={() => { localStorage.clear(); window.location.reload(); }}
+              className="w-full py-3 bg-slate-900 text-white rounded-xl text-sm font-bold active:scale-95 transition-all"
+            >
+              Clear Session & Reload Registry
+            </button>
+            <p className="text-[10px] text-slate-400">Warning: This will log you out of current session.</p>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
+  );
+}
+
+function AppContent() {
   // --- DATABASE & SESSION STATES ---
   const [db, setDb] = useState<SKDatabase>(getStoredDB());
   
@@ -234,28 +288,32 @@ export default function App() {
     // 2. Auth Session Listener
     const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session) {
-        let { data, error } = await supabase.from('users').select('*').eq('id', session.user.id).maybeSingle();
-        
-        if (!data && !error) {
-          // User is in auth but not in public.users - sync them
-          const isAdmin = ['sksanfrancisconagacity@gmail.com'].includes(session.user.email?.toLowerCase() || '');
-          const { data: newData, error: insertError } = await supabase.from('users').upsert({
-            id: session.user.id,
-            email: session.user.email?.toLowerCase() || '',
-            role: isAdmin ? 'admin' : 'regular',
-            is_approved: isAdmin
-          }).select().single();
+        try {
+          let { data, error } = await supabase.from('users').select('*').eq('id', session.user.id).maybeSingle();
           
-          if (!insertError) {
-            data = newData;
+          if (!data && !error) {
+            // User is in auth but not in public.users - sync them
+            const isAdmin = ['sksanfrancisconagacity@gmail.com'].includes(session.user.email?.toLowerCase() || '');
+            const { data: newData, error: insertError } = await supabase.from('users').upsert({
+              id: session.user.id,
+              email: session.user.email?.toLowerCase() || '',
+              role: isAdmin ? 'admin' : 'regular',
+              is_approved: isAdmin
+            }).select().single();
+            
+            if (!insertError) {
+              data = newData;
+            }
           }
-        }
 
-        if (data) {
-          setCurrentUser(data as User);
-          if (currentRoute === 'landing' || currentRoute === 'login') {
-             setCurrentRoute(data.role === 'regular' ? 'user-dashboard' : 'dashboard');
+          if (data) {
+            setCurrentUser(data as User);
+            if (currentRoute === 'landing' || currentRoute === 'login') {
+               setCurrentRoute(data.role === 'regular' ? 'user-dashboard' : 'dashboard');
+            }
           }
+        } catch (authErr) {
+          console.error("Auth sync error:", authErr);
         }
       } else {
         setCurrentUser(isSupabaseConfigured ? null : getStoredDB().users[0]);
@@ -1816,18 +1874,19 @@ export default function App() {
         </div>
       ) : (
         /* --- SECURE COMPILATIONS LAYER --- */
-        <DashboardLayout
-          currentUser={currentUser}
-          currentRoute={currentRoute}
-          onNavigate={(route) => {
-            setCurrentRoute(route);
-            setSelectedProgramId(null);
-            setSelectedParticipantId(null);
-          }}
-          notifications={db.notifications}
-          onMarkNotificationAsRead={handleMarkNotificationAsRead}
-          onClearNotifications={handleClearNotifications}
-        >
+        currentUser ? (
+          <DashboardLayout
+            currentUser={currentUser}
+            currentRoute={currentRoute}
+            onNavigate={(route) => {
+              setCurrentRoute(route);
+              setSelectedProgramId(null);
+              setSelectedParticipantId(null);
+            }}
+            notifications={db.notifications || []}
+            onMarkNotificationAsRead={handleMarkNotificationAsRead}
+            onClearNotifications={handleClearNotifications}
+          >
           {/* SECURE SUB-PAGES */}
 
           {/* PAGE 1: CORE KPIs FOR OFFICIALS */}
@@ -3144,6 +3203,14 @@ export default function App() {
             </div>
           )}
         </DashboardLayout>
+        ) : (
+          <div className="min-h-screen flex items-center justify-center bg-slate-50">
+             <div className="flex flex-col items-center gap-4">
+                <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Hydrating Session...</p>
+             </div>
+          </div>
+        )
       )}
     </div>
   );
